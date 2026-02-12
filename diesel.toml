@@ -1,0 +1,2 @@
+[print_schema]
+file = "src/infra/db/schema.rs"

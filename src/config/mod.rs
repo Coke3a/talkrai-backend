@@ -1,0 +1,62 @@
+pub mod config_loader;
+
+pub struct DotEnvyConfig {
+    pub server: ServerConfig,
+    pub database: DatabaseConfig,
+    pub line: LineConfig,
+    pub ai: AiConfig,
+    pub background_tasks: BackgroundTasksConfig,
+    pub welcome_credits: i32,
+}
+
+pub struct ServerConfig {
+    pub host: String,
+    pub port: u16,
+    pub request_timeout_secs: u64,
+    pub body_limit_bytes: usize,
+}
+
+pub struct DatabaseConfig {
+    pub url: String,
+    pub max_connections: u32,
+}
+
+pub struct LineConfig {
+    pub channel_secret: String,
+    pub channel_access_token: String,
+    pub rich_menu_no_session: String,
+    pub rich_menu_active_session: String,
+    pub narrator_avatar_url: String,
+    pub narrator_display_name: String,
+    pub liff_base_url: String,
+}
+
+pub struct AiConfig {
+    pub claude_api_key: String,
+    pub openai_api_key: String,
+    pub venice_api_key: String,
+    pub default_provider: String,
+    pub max_tokens: u32,
+}
+
+pub struct BackgroundTasksConfig {
+    pub job_channel_capacity: usize,
+    pub max_concurrent_jobs: usize,
+    pub poll_interval_secs: u64,
+    pub poll_batch_size: i64,
+    pub cleanup_interval_secs: u64,
+    pub stale_threshold_secs: i64,
+}
+
+impl Default for BackgroundTasksConfig {
+    fn default() -> Self {
+        Self {
+            job_channel_capacity: 100,
+            max_concurrent_jobs: 10,
+            poll_interval_secs: 5,
+            poll_batch_size: 10,
+            cleanup_interval_secs: 60,
+            stale_threshold_secs: 120,
+        }
+    }
+}

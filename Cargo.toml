@@ -1,0 +1,51 @@
+[package]
+name = "talk-a-line-backend"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = [
+    "trace",
+    "compression-gzip",
+    "request-id",
+    "timeout",
+    "limit",
+    "propagate-header",
+    "set-header",
+] }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# ORM + Database
+diesel = { version = "2.2", features = ["postgres", "uuid", "chrono", "serde_json"] }
+diesel-async = { version = "0.5", features = ["postgres", "deadpool"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP client (LINE API, AI API)
+reqwest = { version = "0.12", features = ["json"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Utils
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+async-trait = "0.1"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+bytes = "1"

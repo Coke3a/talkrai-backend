@@ -1,0 +1,60 @@
+use async_trait::async_trait;
+
+use super::line_client_error::LineClientError;
+
+#[async_trait]
+pub trait LineClient: Send + Sync {
+    /// Verify LINE webhook signature
+    fn verify_signature(&self, body: &[u8], signature: &str) -> Result<bool, LineClientError>;
+
+    /// Push messages to user with sender override
+    async fn push_messages(
+        &self,
+        line_user_id: &str,
+        messages: Vec<LineMessage>,
+    ) -> Result<(), LineClientError>;
+
+    /// Get LINE user profile
+    async fn get_profile(&self, line_user_id: &str) -> Result<LineProfile, LineClientError>;
+
+    /// Link rich menu to user
+    async fn link_rich_menu(
+        &self,
+        line_user_id: &str,
+        rich_menu_id: &str,
+    ) -> Result<(), LineClientError>;
+
+    /// Unlink rich menu from user
+    async fn unlink_rich_menu(&self, line_user_id: &str) -> Result<(), LineClientError>;
+
+    /// Show typing indicator (loading animation) in chat
+    async fn show_loading_animation(
+        &self,
+        line_user_id: &str,
+        loading_seconds: Option<u32>,
+    ) -> Result<(), LineClientError>;
+
+    /// Reply to a webhook event using a reply token (free, no push quota consumed)
+    async fn reply_messages(
+        &self,
+        reply_token: &str,
+        messages: Vec<LineReplyMessage>,
+    ) -> Result<(), LineClientError>;
+}
+
+pub struct LineReplyMessage {
+    pub text: String,
+}
+
+pub struct LineMessage {
+    pub text: String,
+    pub sender_name: String,
+    pub sender_icon_url: String,
+}
+
+pub struct LineProfile {
+    pub user_id: String,
+    pub display_name: String,
+    pub picture_url: Option<String>,
+    pub language: Option<String>,
+}
