@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::domain::repositories::AppConfigRepository;
-use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse};
+use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest};
 use crate::domain::services::AiClientError;
 
 const ACTIVE_LLM_PROVIDER_KEY: &str = "active_llm_provider";
@@ -82,5 +82,15 @@ impl AiClient for LlmRouter {
         tracing::info!(provider = %provider, "Routing LLM request");
         let client = self.get_client(&provider);
         client.generate_roleplay_response(request).await
+    }
+
+    async fn generate_summary(
+        &self,
+        request: AiSummaryRequest,
+    ) -> Result<String, AiClientError> {
+        let provider = self.resolve_provider().await;
+        tracing::info!(provider = %provider, "Routing summary request");
+        let client = self.get_client(&provider);
+        client.generate_summary(request).await
     }
 }

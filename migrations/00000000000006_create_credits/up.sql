@@ -28,20 +28,3 @@ CREATE INDEX idx_credit_transactions_user_id ON credit_transactions (user_id);
 CREATE INDEX idx_credit_transactions_created ON credit_transactions (user_id, created_at);
 CREATE INDEX idx_credit_transactions_reference ON credit_transactions (reference_id)
     WHERE reference_id IS NOT NULL;
-
-CREATE TABLE character_memories (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    character_id      UUID NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
-    memory_type       VARCHAR NOT NULL
-                      CHECK (memory_type IN ('fact', 'event', 'preference', 'relationship')),
-    content           TEXT NOT NULL,
-    importance        SMALLINT NOT NULL DEFAULT 5,
-    last_recalled_at  TIMESTAMPTZ,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT character_memories_importance_range CHECK (importance >= 1 AND importance <= 10)
-);
-
-CREATE INDEX idx_character_memories_user_character ON character_memories (user_id, character_id);
-CREATE INDEX idx_character_memories_importance ON character_memories (user_id, character_id, importance DESC);

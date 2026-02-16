@@ -109,13 +109,15 @@ impl MessageRepository for MessagePostgres {
     ) -> Result<Vec<Message>, RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 
-        let results = messages::table
+        let mut results = messages::table
             .filter(messages::session_id.eq(session_id.as_uuid()))
-            .order(messages::created_at.asc())
+            .order(messages::created_at.desc())
             .limit(limit)
             .load::<MessageRow>(&mut conn)
             .await
             .map_err(|e| map_diesel_error("message.find_by_session_id", e))?;
+
+        results.reverse();
 
         Ok(results.into_iter().map(|row| row.into_entity()).collect())
     }

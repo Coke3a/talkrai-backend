@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -34,5 +35,18 @@ impl AppConfigRepository for AppConfigPostgres {
             .map_err(|e| map_diesel_error("app_config.get", e))?;
 
         Ok(result)
+    }
+
+    async fn get_many(&self, keys: &[&str]) -> Result<HashMap<String, String>, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let results: Vec<(String, String)> = app_config::table
+            .filter(app_config::key.eq_any(keys))
+            .select((app_config::key, app_config::value))
+            .load::<(String, String)>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("app_config.get_many", e))?;
+
+        Ok(results.into_iter().collect())
     }
 }

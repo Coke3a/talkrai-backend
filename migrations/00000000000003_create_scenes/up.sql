@@ -9,7 +9,11 @@ CREATE TABLE scenes (
     opening_narrator    TEXT NOT NULL,
     opening_dialogue    TEXT NOT NULL,
     is_default          BOOLEAN NOT NULL DEFAULT FALSE,
-    is_active           BOOLEAN NOT NULL DEFAULT TRUE,
+    is_active                   BOOLEAN NOT NULL DEFAULT TRUE,
+    start_relationship_level    VARCHAR NOT NULL DEFAULT 'stranger'
+                                CHECK (start_relationship_level IN ('stranger', 'acquaintance', 'friend', 'close_friend')),
+    start_mood                  VARCHAR NOT NULL DEFAULT 'neutral'
+                                CHECK (start_mood IN ('neutral', 'happy', 'sad', 'excited', 'angry', 'shy', 'playful', 'serious', 'worried')),
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );

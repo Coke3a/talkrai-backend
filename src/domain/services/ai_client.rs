@@ -9,6 +9,12 @@ pub trait AiClient: Send + Sync {
         &self,
         request: AiRoleplayRequest,
     ) -> Result<AiRoleplayResponse, AiClientError>;
+
+    /// Generate a summary of conversation messages
+    async fn generate_summary(
+        &self,
+        request: AiSummaryRequest,
+    ) -> Result<String, AiClientError>;
 }
 
 pub struct AiRoleplayRequest {
@@ -26,7 +32,6 @@ pub struct AiRoleplayResponse {
     pub narrator_text: String,
     pub character_text: String,
     pub mood: Option<String>,
-    pub memories: Vec<String>,
     pub scene_update: Option<AiSceneUpdate>,
 }
 
@@ -34,4 +39,10 @@ pub struct AiSceneUpdate {
     pub location: Option<String>,
     pub time: Option<String>,
     pub summary: Option<String>,
+}
+
+pub struct AiSummaryRequest {
+    pub existing_summary: Option<String>,
+    pub messages_to_summarize: Vec<AiMessage>,
+    pub max_tokens: u32,
 }

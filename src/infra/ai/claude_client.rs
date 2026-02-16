@@ -2,10 +2,10 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse};
+use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest};
 use crate::domain::services::AiClientError;
 
-use super::response::parse_llm_response;
+use super::response::{build_summary_system_prompt, parse_llm_response};
 
 const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL: &str = "claude-sonnet-4-5-20250929";
@@ -112,5 +112,63 @@ impl AiClient for ClaudeClient {
             .ok_or_else(|| AiClientError::ParseError("No text block in Claude response".into()))?;
 
         parse_llm_response(text)
+    }
+
+    async fn generate_summary(
+        &self,
+        request: AiSummaryRequest,
+    ) -> Result<String, AiClientError> {
+        let system_prompt = build_summary_system_prompt(&request.existing_summary);
+
+        let body = ClaudeRequest {
+            model: CLAUDE_MODEL,
+            max_tokens: request.max_tokens,
+            system: system_prompt,
+            messages: request
+                .messages_to_summarize
+                .into_iter()
+                .map(|m| ClaudeMessage {
+                    role: m.role,
+                    content: m.content,
+                })
+                .collect(),
+        };
+
+        let response = self
+            .http
+            .post(CLAUDE_API_URL)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", ANTHROPIC_VERSION)
+            .header("content-type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AiClientError::NetworkError(e.into()))?;
+
+        let status = response.status().as_u16();
+        if status == 429 {
+            return Err(AiClientError::RateLimited);
+        }
+        if !response.status().is_success() {
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".into());
+            return Err(AiClientError::ApiError { status, message });
+        }
+
+        let claude_resp: ClaudeResponse = response
+            .json()
+            .await
+            .map_err(|e| AiClientError::ParseError(format!("Failed to deserialize Claude summary response: {e}")))?;
+
+        let text = claude_resp
+            .content
+            .iter()
+            .find(|b| b.block_type == "text")
+            .and_then(|b| b.text.as_deref())
+            .ok_or_else(|| AiClientError::ParseError("No text block in Claude summary response".into()))?;
+
+        Ok(text.trim().to_string())
     }
 }

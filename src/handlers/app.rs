@@ -18,8 +18,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::DotEnvyConfig;
 use crate::domain::repositories::{
-    CharacterMemoryRepository, CharacterRepository, CreditRepository, JobRepository,
-    MessageRepository, RoleplaySessionRepository, SceneRepository, UserRepository,
+    AppConfigRepository, CharacterRepository, CreditRepository,
+    JobRepository, MessageRepository, RoleplaySessionRepository, SceneRepository, UserRepository,
 };
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
@@ -43,7 +43,8 @@ pub struct AppState {
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
     init_tracing();
 
-    let (repos, line_client, ai_client) = create_infrastructure(&config, &db_pool);
+    let (repos, line_client, ai_client, config_repo) =
+        create_infrastructure(&config, &db_pool);
 
     let (job_sender, job_receiver) =
         mpsc::channel::<JobId>(config.background_tasks.job_channel_capacity);
@@ -54,10 +55,9 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&repos.session_repo),
         Arc::clone(&repos.job_repo),
         Arc::clone(&repos.credit_repo),
+        Arc::clone(&config_repo),
         job_sender.clone(),
-        config.welcome_credits,
         config.line.liff_base_url.clone(),
-        config.line.rich_menu_no_session.clone(),
     ));
 
     let state = AppState {
@@ -76,6 +76,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         &repos,
         &line_client,
         &ai_client,
+        &config_repo,
         &config,
         job_sender,
         job_receiver,
@@ -134,6 +135,7 @@ fn spawn_background_tasks(
     repos: &Repositories,
     line_client: &Arc<dyn LineClient>,
     ai_client: &Arc<dyn AiClient>,
+    config_repo: &Arc<dyn AppConfigRepository>,
     config: &DotEnvyConfig,
     job_sender: mpsc::Sender<JobId>,
     job_receiver: mpsc::Receiver<JobId>,
@@ -146,12 +148,9 @@ fn spawn_background_tasks(
         Arc::clone(&repos.scene_repo),
         Arc::clone(&repos.message_repo),
         Arc::clone(&repos.credit_repo),
-        Arc::clone(&repos.memory_repo),
         Arc::clone(ai_client),
         Arc::clone(line_client),
-        config.line.narrator_display_name.clone(),
-        config.line.narrator_avatar_url.clone(),
-        config.ai.max_tokens,
+        Arc::clone(config_repo),
     ));
 
     let dispatcher = Arc::new(crate::handlers::job_dispatcher::JobDispatcher::new(
@@ -222,19 +221,23 @@ struct Repositories {
     scene_repo: Arc<dyn SceneRepository>,
     message_repo: Arc<dyn MessageRepository>,
     credit_repo: Arc<dyn CreditRepository>,
-    memory_repo: Arc<dyn CharacterMemoryRepository>,
 }
 
 fn create_infrastructure(
     config: &DotEnvyConfig,
     db_pool: &Arc<PgPool>,
-) -> (Repositories, Arc<dyn LineClient>, Arc<dyn AiClient>) {
+) -> (
+    Repositories,
+    Arc<dyn LineClient>,
+    Arc<dyn AiClient>,
+    Arc<dyn AppConfigRepository>,
+) {
     use crate::infra::ai::claude_client::ClaudeClient;
     use crate::infra::ai::openai_client::OpenAiClient;
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CharacterMemoryPostgres, CharacterPostgres, CreditPostgres,
+        AppConfigPostgres, CharacterPostgres, CreditPostgres,
         JobPostgres, MessagePostgres, RoleplaySessionPostgres, ScenePostgres, UserPostgres,
     };
 
@@ -246,7 +249,6 @@ fn create_infrastructure(
         message_repo: Arc::new(MessagePostgres::new(Arc::clone(db_pool))),
         job_repo: Arc::new(JobPostgres::new(Arc::clone(db_pool))),
         credit_repo: Arc::new(CreditPostgres::new(Arc::clone(db_pool))),
-        memory_repo: Arc::new(CharacterMemoryPostgres::new(Arc::clone(db_pool))),
     };
 
     let line_client: Arc<dyn LineClient> = Arc::new(
@@ -270,9 +272,9 @@ fn create_infrastructure(
         claude,
         openai,
         venice,
-        config_repo,
+        Arc::clone(&config_repo),
         config.ai.default_provider.clone(),
     ));
 
-    (repos, line_client, ai_client)
+    (repos, line_client, ai_client, config_repo)
 }

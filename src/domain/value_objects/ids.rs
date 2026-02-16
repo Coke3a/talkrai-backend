@@ -35,4 +35,3 @@ define_id!(SessionId);
 define_id!(MessageId);
 define_id!(JobId);
 define_id!(CreditTransactionId);
-define_id!(CharacterMemoryId);

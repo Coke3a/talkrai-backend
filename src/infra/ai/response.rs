@@ -8,8 +8,6 @@ pub struct LlmRoleplayOutput {
     pub narrator_text: String,
     pub character_text: String,
     pub mood: Option<String>,
-    #[serde(default)]
-    pub memories: Vec<String>,
     pub scene_update: Option<LlmSceneUpdate>,
 }
 
@@ -18,6 +16,25 @@ pub struct LlmSceneUpdate {
     pub location: Option<String>,
     pub time: Option<String>,
     pub summary: Option<String>,
+}
+
+/// Build a system prompt for conversation summarization.
+pub fn build_summary_system_prompt(existing_summary: &Option<String>) -> String {
+    let mut prompt = String::from(
+        "You are a concise summarizer for a Thai roleplay conversation. \
+         Summarize the key events, character interactions, and emotional developments \
+         in 2-4 sentences in Thai. Focus on what matters for story continuity. \
+         Return only the summary text, no JSON or markdown.",
+    );
+
+    if let Some(existing) = existing_summary {
+        prompt.push_str(&format!(
+            "\n\nPrevious summary to incorporate: {}",
+            existing
+        ));
+    }
+
+    prompt
 }
 
 /// Strip markdown code fences (```json ... ```) and parse JSON into `AiRoleplayResponse`.
@@ -46,7 +63,6 @@ pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError
         narrator_text: output.narrator_text,
         character_text: output.character_text,
         mood: output.mood,
-        memories: output.memories,
         scene_update: output.scene_update.map(|su| AiSceneUpdate {
             location: su.location,
             time: su.time,

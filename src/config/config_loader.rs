@@ -30,13 +30,6 @@ pub fn load() -> Result<DotEnvyConfig> {
             .context("LINE_CHANNEL_SECRET is required")?,
         channel_access_token: std::env::var("LINE_CHANNEL_ACCESS_TOKEN")
             .context("LINE_CHANNEL_ACCESS_TOKEN is required")?,
-        rich_menu_no_session: std::env::var("RICH_MENU_NO_SESSION")
-            .context("RICH_MENU_NO_SESSION is required")?,
-        rich_menu_active_session: std::env::var("RICH_MENU_ACTIVE_SESSION")
-            .context("RICH_MENU_ACTIVE_SESSION is required")?,
-        narrator_avatar_url: std::env::var("NARRATOR_AVATAR_URL")
-            .context("NARRATOR_AVATAR_URL is required")?,
-        narrator_display_name: env_or("NARRATOR_DISPLAY_NAME", "\u{3164}"),
         liff_base_url: std::env::var("LIFF_BASE_URL").context("LIFF_BASE_URL is required")?,
     };
 
@@ -48,9 +41,6 @@ pub fn load() -> Result<DotEnvyConfig> {
         venice_api_key: std::env::var("VENICE_API_KEY")
             .context("VENICE_API_KEY is required")?,
         default_provider: env_or("DEFAULT_LLM_PROVIDER", "claude"),
-        max_tokens: env_or("AI_MAX_TOKENS", "1024")
-            .parse()
-            .context("Invalid AI_MAX_TOKENS")?,
     };
 
     let bg_defaults = BackgroundTasksConfig::default();
@@ -90,17 +80,12 @@ pub fn load() -> Result<DotEnvyConfig> {
         .context("Invalid STALE_THRESHOLD_SECS")?,
     };
 
-    let welcome_credits = env_or("WELCOME_CREDITS", "50")
-        .parse()
-        .context("Invalid WELCOME_CREDITS")?;
-
     Ok(DotEnvyConfig {
         server,
         database,
         line,
         ai,
         background_tasks,
-        welcome_credits,
     })
 }
 

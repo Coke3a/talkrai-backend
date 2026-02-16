@@ -15,14 +15,20 @@ pub struct RoleplaySession {
     relationship_level: RelationshipLevel,
     message_count: i32,
     current_location: Option<String>,
-    current_time: Option<String>,
+    scene_time: Option<String>,
     scene_summary: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
 
 impl RoleplaySession {
-    pub fn new(user_id: UserId, character_id: CharacterId, scene_id: SceneId) -> Self {
+    pub fn new(
+        user_id: UserId,
+        character_id: CharacterId,
+        scene_id: SceneId,
+        start_relationship_level: RelationshipLevel,
+        start_mood: CharacterMood,
+    ) -> Self {
         let now = Utc::now();
         Self {
             id: SessionId::new(),
@@ -30,11 +36,11 @@ impl RoleplaySession {
             character_id,
             scene_id,
             status: SessionStatus::Active,
-            mood: CharacterMood::Neutral,
-            relationship_level: RelationshipLevel::Stranger,
+            mood: start_mood,
+            relationship_level: start_relationship_level,
             message_count: 0,
             current_location: None,
-            current_time: None,
+            scene_time: None,
             scene_summary: None,
             created_at: now,
             updated_at: now,
@@ -51,7 +57,7 @@ impl RoleplaySession {
         relationship_level: RelationshipLevel,
         message_count: i32,
         current_location: Option<String>,
-        current_time: Option<String>,
+        scene_time: Option<String>,
         scene_summary: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -66,7 +72,7 @@ impl RoleplaySession {
             relationship_level,
             message_count,
             current_location,
-            current_time,
+            scene_time,
             scene_summary,
             created_at,
             updated_at,
@@ -109,8 +115,8 @@ impl RoleplaySession {
         self.current_location.as_deref()
     }
 
-    pub fn current_time(&self) -> Option<&str> {
-        self.current_time.as_deref()
+    pub fn scene_time(&self) -> Option<&str> {
+        self.scene_time.as_deref()
     }
 
     pub fn scene_summary(&self) -> Option<&str> {
@@ -167,6 +173,11 @@ impl RoleplaySession {
         None
     }
 
+    pub fn update_scene_summary(&mut self, summary: String) {
+        self.scene_summary = Some(summary);
+        self.updated_at = Utc::now();
+    }
+
     pub fn update_scene_context(
         &mut self,
         location: Option<String>,
@@ -174,8 +185,10 @@ impl RoleplaySession {
         summary: Option<String>,
     ) {
         self.current_location = location;
-        self.current_time = time;
-        self.scene_summary = summary;
+        self.scene_time = time;
+        if let Some(s) = summary {
+            self.scene_summary = Some(s);
+        }
         self.updated_at = Utc::now();
     }
 }

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::entities::Scene;
 use crate::domain::repositories::{RepoError, SceneRepository};
-use crate::domain::value_objects::{CharacterId, SceneId, SceneName};
+use crate::domain::value_objects::{CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::scenes;
 
@@ -28,6 +28,8 @@ struct SceneRow {
     opening_dialogue: String,
     is_default: bool,
     is_active: bool,
+    start_relationship_level: String,
+    start_mood: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -46,6 +48,10 @@ impl SceneRow {
             self.opening_dialogue,
             self.is_default,
             self.is_active,
+            RelationshipLevel::from_str(&self.start_relationship_level)
+                .expect("invalid start_relationship_level in DB"),
+            CharacterMood::from_str(&self.start_mood)
+                .expect("invalid start_mood in DB"),
             self.created_at,
             self.updated_at,
         )

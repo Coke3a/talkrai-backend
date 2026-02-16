@@ -2,27 +2,26 @@ use std::sync::Arc;
 
 use serde_json::json;
 
-use crate::domain::entities::{Character, CharacterMemory, Job, Message, RoleplaySession, Scene};
+use crate::domain::entities::{Character, Job, Message, RoleplaySession, Scene};
 use crate::domain::repositories::{
-    CharacterMemoryRepository, CharacterRepository, CreditRepository, JobRepository,
-    MessageRepository, RoleplaySessionRepository, SceneRepository,
+    AppConfigRepository, CharacterRepository, CreditRepository,
+    JobRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
 };
-use crate::domain::services::ai_client::{AiClient, AiMessage, AiRoleplayRequest};
+use crate::domain::services::ai_client::{AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest};
 use crate::domain::services::line_client::{LineClient, LineMessage};
-use crate::domain::value_objects::{CharacterMood, JobId, MemoryType, MessageRole, MessageType};
+use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, MessageType};
 use crate::usecases::UsecaseError;
 
 pub fn build_system_prompt(
     character: &Character,
     scene: &Scene,
     session: &RoleplaySession,
-    memories: &[CharacterMemory],
 ) -> String {
     let location = session
         .current_location()
         .unwrap_or_else(|| scene.location());
     let time = session
-        .current_time()
+        .scene_time()
         .unwrap_or_else(|| scene.time_of_day());
 
     let mut prompt = format!(
@@ -60,17 +59,6 @@ Location: {} | Time: {}"#,
         session.relationship_level().relationship_prompt_modifier(),
     ));
 
-    if !memories.is_empty() {
-        prompt.push_str("\n\n## Memories");
-        for memory in memories {
-            prompt.push_str(&format!(
-                "\n- [{}] {}",
-                memory.memory_type().as_str(),
-                memory.content()
-            ));
-        }
-    }
-
     prompt.push_str(
         r#"
 
@@ -78,10 +66,9 @@ Location: {} | Time: {}"#,
 - narrator_text: start with "📍 location • 🕒 time\n", then 3rd-person scene narration
 - character_text: in-character Thai dialogue matching your voice, mood & relationship
 - mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
-- memories: notable new facts/events/preferences about user ([] if none)
 - scene_update: {"location":"…","time":"…","summary":"…"} or null
 
-{"narrator_text":"","character_text":"","mood":"","memories":[],"scene_update":null}"#,
+{"narrator_text":"","character_text":"","mood":"","scene_update":null}"#,
     );
 
     prompt
@@ -160,12 +147,16 @@ pub struct ProcessRoleplayMessageUseCase {
     scene_repo: Arc<dyn SceneRepository>,
     message_repo: Arc<dyn MessageRepository>,
     credit_repo: Arc<dyn CreditRepository>,
-    memory_repo: Arc<dyn CharacterMemoryRepository>,
     ai_client: Arc<dyn AiClient>,
     line_client: Arc<dyn LineClient>,
+    config_repo: Arc<dyn AppConfigRepository>,
+}
+
+struct ResolvedConfig {
     narrator_display_name: String,
     narrator_avatar_url: String,
     ai_max_tokens: u32,
+    summarize_interval: Option<u32>,
 }
 
 pub struct ProcessRoleplayMessageInput {
@@ -180,12 +171,9 @@ impl ProcessRoleplayMessageUseCase {
         scene_repo: Arc<dyn SceneRepository>,
         message_repo: Arc<dyn MessageRepository>,
         credit_repo: Arc<dyn CreditRepository>,
-        memory_repo: Arc<dyn CharacterMemoryRepository>,
         ai_client: Arc<dyn AiClient>,
         line_client: Arc<dyn LineClient>,
-        narrator_display_name: String,
-        narrator_avatar_url: String,
-        ai_max_tokens: u32,
+        config_repo: Arc<dyn AppConfigRepository>,
     ) -> Self {
         Self {
             job_repo,
@@ -194,13 +182,36 @@ impl ProcessRoleplayMessageUseCase {
             scene_repo,
             message_repo,
             credit_repo,
-            memory_repo,
             ai_client,
             line_client,
-            narrator_display_name,
-            narrator_avatar_url,
-            ai_max_tokens,
+            config_repo,
         }
+    }
+
+    async fn resolve_config(&self) -> Result<ResolvedConfig, UsecaseError> {
+        let keys = &["narrator_display_name", "narrator_avatar_url", "ai_max_tokens", "summarize_interval"];
+        let map = self.config_repo.get_many(keys).await?;
+
+        let summarize_interval = map
+            .get("summarize_interval")
+            .and_then(|v| v.parse::<u32>().ok());
+
+        Ok(ResolvedConfig {
+            narrator_display_name: map
+                .get("narrator_display_name")
+                .cloned()
+                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_display_name")))?,
+            narrator_avatar_url: map
+                .get("narrator_avatar_url")
+                .cloned()
+                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_avatar_url")))?,
+            ai_max_tokens: map
+                .get("ai_max_tokens")
+                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: ai_max_tokens")))?
+                .parse::<u32>()
+                .map_err(|e| UsecaseError::Infra(anyhow::anyhow!("Invalid app_config ai_max_tokens: {}", e)))?,
+            summarize_interval,
+        })
     }
 
     /// Wrapper: lock job, delegate to process_job, mark failed on error.
@@ -240,27 +251,17 @@ impl ProcessRoleplayMessageUseCase {
             .await?
             .ok_or_else(|| UsecaseError::NotFound("Session not found".into()))?;
 
-        let character = self
-            .character_repo
-            .find_by_id(session.character_id())
-            .await?
+        // Parallel fetch: character, scene, messages (all depend on session but not each other)
+        let (character_opt, scene_opt, recent_messages) = tokio::try_join!(
+            async { self.character_repo.find_by_id(session.character_id()).await.map_err(UsecaseError::from) },
+            async { self.scene_repo.find_by_id(session.scene_id()).await.map_err(UsecaseError::from) },
+            async { self.message_repo.find_by_session_id(session.id(), 20).await.map_err(UsecaseError::from) },
+        )?;
+
+        let character = character_opt
             .ok_or_else(|| UsecaseError::NotFound("Character not found".into()))?;
-
-        let scene = self
-            .scene_repo
-            .find_by_id(session.scene_id())
-            .await?
+        let scene = scene_opt
             .ok_or_else(|| UsecaseError::NotFound("Scene not found".into()))?;
-
-        let recent_messages = self
-            .message_repo
-            .find_by_session_id(session.id(), 20)
-            .await?;
-
-        let memories = self
-            .memory_repo
-            .find_by_user_and_character(session.user_id(), session.character_id(), 10)
-            .await?;
 
         // 3. Check credits
         let credit_balance = self
@@ -276,21 +277,24 @@ impl ProcessRoleplayMessageUseCase {
         // 4. Classify user input
         let user_message_type = MessageType::classify_user_input(job.user_message());
 
-        // 5. Build prompt (call free functions)
-        let system_prompt = build_system_prompt(&character, &scene, &session, &memories);
+        // 5. Resolve config from DB
+        let cfg = self.resolve_config().await?;
+
+        // 6. Build prompt (call free functions)
+        let system_prompt = build_system_prompt(&character, &scene, &session);
         let ai_messages = build_ai_messages(&recent_messages, job.user_message());
 
-        // 6. Call AI
+        // 7. Call AI
         let ai_response = self
             .ai_client
             .generate_roleplay_response(AiRoleplayRequest {
                 system_prompt,
                 messages: ai_messages,
-                max_tokens: self.ai_max_tokens,
+                max_tokens: cfg.ai_max_tokens,
             })
             .await?;
 
-        // 7. Save 3 messages: user, narrator, character
+        // 8. Save 3 messages: user, narrator, character
         let user_msg = Message::new(
             session.id().clone(),
             MessageRole::User,
@@ -313,14 +317,14 @@ impl ProcessRoleplayMessageUseCase {
             .create_many(&[user_msg, narrator_msg, character_msg])
             .await?;
 
-        // 8. Deduct credit
+        // 9. Deduct credit
         let mut balance = credit_balance;
         let transaction = balance.deduct(1, Some(*job.id().as_uuid()))?;
         self.credit_repo
             .deduct_and_log(session.user_id(), 1, &transaction)
             .await?;
 
-        // 9. Update session
+        // 10. Update session
         let mut session = session;
         if let Some(mood_str) = &ai_response.mood {
             if let Ok(mood) = CharacterMood::from_str(mood_str) {
@@ -345,32 +349,11 @@ impl ProcessRoleplayMessageUseCase {
             );
         }
 
-        // 10. Save memories
-        if !ai_response.memories.is_empty() {
-            let new_memories: Vec<CharacterMemory> = ai_response
-                .memories
-                .iter()
-                .filter_map(|content| {
-                    CharacterMemory::new(
-                        session.user_id().clone(),
-                        session.character_id().clone(),
-                        MemoryType::Event,
-                        content.clone(),
-                        5,
-                    )
-                    .ok()
-                })
-                .collect();
-            if !new_memories.is_empty() {
-                self.memory_repo.create_many(&new_memories).await?;
-            }
-        }
-
         // 11. Push 2 LINE messages with Sender Override
         let narrator_line_msg = LineMessage {
             text: ai_response.narrator_text,
-            sender_name: self.narrator_display_name.clone(),
-            sender_icon_url: self.narrator_avatar_url.clone(),
+            sender_name: cfg.narrator_display_name,
+            sender_icon_url: cfg.narrator_avatar_url,
         };
         let character_line_msg = LineMessage {
             text: ai_response.character_text,
@@ -391,14 +374,106 @@ impl ProcessRoleplayMessageUseCase {
             "Roleplay message processed"
         );
 
+        // 13. Background summarization (best-effort, after user gets response)
+        if let Some(interval) = cfg.summarize_interval.filter(|&v| v > 0) {
+            self.maybe_summarize(&session, interval).await;
+        }
+
         Ok(())
+    }
+
+    /// Best-effort summarization of messages that are about to fall off the context window.
+    async fn maybe_summarize(&self, session: &RoleplaySession, summarize_interval: u32) {
+        let message_count = session.message_count() as u32;
+
+        // Only trigger at interval boundaries
+        if message_count % summarize_interval != 0 {
+            return;
+        }
+
+        // No point summarizing if we haven't exceeded the context window yet
+        if message_count * 3 <= 20 {
+            return;
+        }
+
+        tracing::info!(
+            session_id = %session.id().as_uuid(),
+            message_count = message_count,
+            "Triggering conversation summarization"
+        );
+
+        // Fetch 40 most recent messages
+        let all_messages = match self.message_repo.find_by_session_id(session.id(), 40).await {
+            Ok(msgs) => msgs,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to fetch messages for summarization");
+                return;
+            }
+        };
+
+        if all_messages.len() <= 20 {
+            return;
+        }
+
+        // Messages that are "falling off" — older ones not in the recent 20
+        let falling_off = &all_messages[..all_messages.len() - 20];
+
+        // Convert to AiMessage format
+        let ai_messages: Vec<AiMessage> = falling_off
+            .iter()
+            .map(|m| AiMessage {
+                role: match m.role() {
+                    MessageRole::User => "user".to_string(),
+                    MessageRole::Narrator | MessageRole::Character => "assistant".to_string(),
+                },
+                content: m.content().to_string(),
+            })
+            .collect();
+
+        let summary_request = AiSummaryRequest {
+            existing_summary: session.scene_summary().map(|s| s.to_string()),
+            messages_to_summarize: ai_messages,
+            max_tokens: 300,
+        };
+
+        let new_summary = match self.ai_client.generate_summary(summary_request).await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to generate summary");
+                return;
+            }
+        };
+
+        // Re-fetch session to avoid stale data
+        let mut fresh_session = match self.session_repo.find_by_id(session.id()).await {
+            Ok(Some(s)) => s,
+            Ok(None) => {
+                tracing::warn!("Session not found during summarization");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to re-fetch session for summarization");
+                return;
+            }
+        };
+
+        fresh_session.update_scene_summary(new_summary);
+
+        if let Err(e) = self.session_repo.update(&fresh_session).await {
+            tracing::warn!(error = %e, "Failed to save summary to session");
+        } else {
+            tracing::info!(
+                session_id = %session.id().as_uuid(),
+                "Conversation summary updated"
+            );
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::entities::{Character, CharacterMemory, Message, RoleplaySession, Scene};
+    use crate::domain::entities::{Character, Message, RoleplaySession, Scene};
     use crate::domain::value_objects::*;
 
     fn test_character() -> Character {
@@ -430,6 +505,8 @@ mod tests {
             "สวัสดีค่า~ ยินดีต้อนรับนะคะ".to_string(),
             true,
             true,
+            RelationshipLevel::Stranger,
+            CharacterMood::Neutral,
             chrono::Utc::now(),
             chrono::Utc::now(),
         )
@@ -459,7 +536,7 @@ mod tests {
         let scene = test_scene();
         let session = test_session();
 
-        let prompt = build_system_prompt(&character, &scene, &session, &[]);
+        let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(prompt.contains("มิโกะ"));
         assert!(prompt.contains("คุณเป็นเด็กสาวขายขนมปัง"));
@@ -493,7 +570,7 @@ mod tests {
             chrono::Utc::now(),
         );
 
-        let prompt = build_system_prompt(&character, &scene, &session, &[]);
+        let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(prompt.contains("Location: สวนสาธารณะ"));
         assert!(prompt.contains("Time: เย็น"));
@@ -505,58 +582,21 @@ mod tests {
     fn build_system_prompt_falls_back_to_scene_location() {
         let character = test_character();
         let scene = test_scene();
-        let session = test_session(); // no current_location/current_time
+        let session = test_session(); // no current_location/scene_time
 
-        let prompt = build_system_prompt(&character, &scene, &session, &[]);
+        let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(prompt.contains("Location: ร้านขนมปังเล็กๆ ริมถนน"));
         assert!(prompt.contains("Time: เช้า"));
     }
 
     #[test]
-    fn build_system_prompt_includes_memories() {
-        let character = test_character();
-        let scene = test_scene();
-        let session = test_session();
-        let memories = vec![
-            CharacterMemory::from_existing(
-                CharacterMemoryId::new(),
-                UserId::new(),
-                CharacterId::new(),
-                MemoryType::Fact,
-                "ชื่อผู้ใช้คือ ซากุระ".to_string(),
-                8,
-                None,
-                chrono::Utc::now(),
-                chrono::Utc::now(),
-            ),
-            CharacterMemory::from_existing(
-                CharacterMemoryId::new(),
-                UserId::new(),
-                CharacterId::new(),
-                MemoryType::Preference,
-                "ชอบขนมปังครัวซองต์".to_string(),
-                6,
-                None,
-                chrono::Utc::now(),
-                chrono::Utc::now(),
-            ),
-        ];
-
-        let prompt = build_system_prompt(&character, &scene, &session, &memories);
-
-        assert!(prompt.contains("## Memories"));
-        assert!(prompt.contains("[fact] ชื่อผู้ใช้คือ ซากุระ"));
-        assert!(prompt.contains("[preference] ชอบขนมปังครัวซองต์"));
-    }
-
-    #[test]
-    fn build_system_prompt_omits_memory_section_when_empty() {
+    fn build_system_prompt_has_no_memory_section() {
         let character = test_character();
         let scene = test_scene();
         let session = test_session();
 
-        let prompt = build_system_prompt(&character, &scene, &session, &[]);
+        let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(!prompt.contains("## Memories"));
     }
@@ -708,7 +748,7 @@ mod tests {
         let scene = test_scene();
         let session = test_session();
 
-        let prompt = build_system_prompt(&character, &scene, &session, &[]);
+        let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(prompt.contains("narrator_text"));
         assert!(prompt.contains("character_text"));

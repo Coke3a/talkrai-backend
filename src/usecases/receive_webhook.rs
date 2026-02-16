@@ -6,7 +6,8 @@ use uuid::Uuid;
 
 use crate::domain::entities::{CreditBalance, Job, User};
 use crate::domain::repositories::{
-    CreditRepository, JobRepository, RoleplaySessionRepository, UserRepository,
+    AppConfigRepository, CreditRepository, JobRepository, RoleplaySessionRepository,
+    UserRepository,
 };
 use crate::domain::services::line_client::{LineClient, LineReplyMessage};
 use crate::domain::value_objects::{JobId, JobMode, SessionId, UserId};
@@ -75,10 +76,9 @@ pub struct ReceiveWebhookUseCase {
     session_repo: Arc<dyn RoleplaySessionRepository>,
     job_repo: Arc<dyn JobRepository>,
     credit_repo: Arc<dyn CreditRepository>,
+    config_repo: Arc<dyn AppConfigRepository>,
     job_sender: mpsc::Sender<JobId>,
-    welcome_credits: i32,
     liff_base_url: String,
-    rich_menu_no_session: String,
 }
 
 impl ReceiveWebhookUseCase {
@@ -88,10 +88,9 @@ impl ReceiveWebhookUseCase {
         session_repo: Arc<dyn RoleplaySessionRepository>,
         job_repo: Arc<dyn JobRepository>,
         credit_repo: Arc<dyn CreditRepository>,
+        config_repo: Arc<dyn AppConfigRepository>,
         job_sender: mpsc::Sender<JobId>,
-        welcome_credits: i32,
         liff_base_url: String,
-        rich_menu_no_session: String,
     ) -> Self {
         Self {
             line_client,
@@ -99,11 +98,28 @@ impl ReceiveWebhookUseCase {
             session_repo,
             job_repo,
             credit_repo,
+            config_repo,
             job_sender,
-            welcome_credits,
             liff_base_url,
-            rich_menu_no_session,
         }
+    }
+
+    async fn resolve_rich_menu_no_session(&self) -> Result<String, UsecaseError> {
+        self.config_repo
+            .get("rich_menu_no_session")
+            .await?
+            .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: rich_menu_no_session")))
+    }
+
+    async fn resolve_welcome_credits(&self) -> Result<i32, UsecaseError> {
+        let value = self
+            .config_repo
+            .get("welcome_credits")
+            .await?
+            .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: welcome_credits")))?;
+        value
+            .parse::<i32>()
+            .map_err(|e| UsecaseError::Infra(anyhow::anyhow!("Invalid app_config welcome_credits: {}", e)))
     }
 
     pub async fn execute(
@@ -271,9 +287,10 @@ impl ReceiveWebhookUseCase {
         }
 
         // Link "no session" rich menu — non-fatal
+        let rich_menu_id = self.resolve_rich_menu_no_session().await?;
         if let Err(e) = self
             .line_client
-            .link_rich_menu(line_user_id, &self.rich_menu_no_session)
+            .link_rich_menu(line_user_id, &rich_menu_id)
             .await
         {
             tracing::warn!(
@@ -375,14 +392,15 @@ impl ReceiveWebhookUseCase {
                     User::new(line_user_id.to_string(), profile.display_name, profile.picture_url);
                 self.user_repo.upsert(&user).await?;
 
+                let welcome_credits = self.resolve_welcome_credits().await?;
                 let balance =
-                    CreditBalance::new(user.id().clone(), self.welcome_credits);
+                    CreditBalance::new(user.id().clone(), welcome_credits);
                 self.credit_repo.create_balance(&balance).await?;
 
                 tracing::info!(
                     user_id = %user.id().as_uuid(),
                     "New user created with {} welcome credits",
-                    self.welcome_credits
+                    welcome_credits
                 );
 
                 Ok(user)

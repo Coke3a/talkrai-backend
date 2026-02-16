@@ -1,5 +1,4 @@
 pub mod character;
-pub mod character_memory;
 pub mod credit_balance;
 pub mod credit_transaction;
 pub mod job;
@@ -9,7 +8,6 @@ pub mod scene;
 pub mod user;
 
 pub use character::Character;
-pub use character_memory::CharacterMemory;
 pub use credit_balance::CreditBalance;
 pub use credit_transaction::CreditTransaction;
 pub use job::Job;

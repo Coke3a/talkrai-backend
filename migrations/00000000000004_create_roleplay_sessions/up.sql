@@ -11,7 +11,7 @@ CREATE TABLE roleplay_sessions (
                         CHECK (relationship_level IN ('stranger', 'acquaintance', 'friend', 'close_friend')),
     message_count       INTEGER NOT NULL DEFAULT 0,
     current_location    VARCHAR(255),
-    current_time        VARCHAR(50),
+    scene_time          VARCHAR(50),
     scene_summary       TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()

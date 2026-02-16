@@ -42,6 +42,8 @@ diesel::table! {
         opening_dialogue -> Text,
         is_default -> Bool,
         is_active -> Bool,
+        start_relationship_level -> Varchar,
+        start_mood -> Varchar,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
     }
@@ -58,7 +60,7 @@ diesel::table! {
         relationship_level -> Varchar,
         message_count -> Int4,
         current_location -> Nullable<Varchar>,
-        current_time -> Nullable<Varchar>,
+        scene_time -> Nullable<Varchar>,
         scene_summary -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
@@ -129,20 +131,6 @@ diesel::table! {
     }
 }
 
-diesel::table! {
-    character_memories (id) {
-        id -> Uuid,
-        user_id -> Uuid,
-        character_id -> Uuid,
-        memory_type -> Varchar,
-        content -> Text,
-        importance -> SmallInt,
-        last_recalled_at -> Nullable<Timestamptz>,
-        created_at -> Timestamptz,
-        updated_at -> Timestamptz,
-    }
-}
-
 diesel::joinable!(scenes -> characters (character_id));
 diesel::joinable!(roleplay_sessions -> users (user_id));
 diesel::joinable!(roleplay_sessions -> characters (character_id));
@@ -151,8 +139,6 @@ diesel::joinable!(messages -> roleplay_sessions (session_id));
 diesel::joinable!(jobs -> users (user_id));
 diesel::joinable!(credit_balances -> users (user_id));
 diesel::joinable!(credit_transactions -> users (user_id));
-diesel::joinable!(character_memories -> users (user_id));
-diesel::joinable!(character_memories -> characters (character_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     app_config,
@@ -164,5 +150,4 @@ diesel::allow_tables_to_appear_in_same_query!(
     jobs,
     credit_balances,
     credit_transactions,
-    character_memories,
 );

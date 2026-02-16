@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::value_objects::{CharacterId, SceneId, SceneName};
+use crate::domain::value_objects::{CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName};
 
 pub struct Scene {
     id: SceneId,
@@ -14,6 +14,8 @@ pub struct Scene {
     opening_dialogue: String,
     is_default: bool,
     is_active: bool,
+    start_relationship_level: RelationshipLevel,
+    start_mood: CharacterMood,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -29,6 +31,8 @@ impl Scene {
         opening_narrator: String,
         opening_dialogue: String,
         is_default: bool,
+        start_relationship_level: RelationshipLevel,
+        start_mood: CharacterMood,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -43,6 +47,8 @@ impl Scene {
             opening_dialogue,
             is_default,
             is_active: true,
+            start_relationship_level,
+            start_mood,
             created_at: now,
             updated_at: now,
         }
@@ -60,6 +66,8 @@ impl Scene {
         opening_dialogue: String,
         is_default: bool,
         is_active: bool,
+        start_relationship_level: RelationshipLevel,
+        start_mood: CharacterMood,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -75,6 +83,8 @@ impl Scene {
             opening_dialogue,
             is_default,
             is_active,
+            start_relationship_level,
+            start_mood,
             created_at,
             updated_at,
         }
@@ -122,6 +132,14 @@ impl Scene {
 
     pub fn is_active(&self) -> bool {
         self.is_active
+    }
+
+    pub fn start_relationship_level(&self) -> &RelationshipLevel {
+        &self.start_relationship_level
+    }
+
+    pub fn start_mood(&self) -> &CharacterMood {
+        &self.start_mood
     }
 
     pub fn created_at(&self) -> &DateTime<Utc> {
