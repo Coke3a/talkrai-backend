@@ -6,6 +6,8 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 use crate::domain::entities::Message;
 use crate::domain::repositories::{MessageRepository, RepoError};
 use crate::domain::value_objects::{MessageId, MessageRole, MessageType, SessionId};

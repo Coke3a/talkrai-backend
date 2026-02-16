@@ -47,6 +47,7 @@ impl Job {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: JobId,
         mode: JobMode,

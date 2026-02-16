@@ -6,8 +6,7 @@ use uuid::Uuid;
 
 use crate::domain::entities::{CreditBalance, Job, User};
 use crate::domain::repositories::{
-    AppConfigRepository, CreditRepository, JobRepository, RoleplaySessionRepository,
-    UserRepository,
+    AppConfigRepository, CreditRepository, JobRepository, RoleplaySessionRepository, UserRepository,
 };
 use crate::domain::services::line_client::{LineClient, LineReplyMessage};
 use crate::domain::value_objects::{JobId, JobMode, SessionId, UserId};
@@ -82,6 +81,7 @@ pub struct ReceiveWebhookUseCase {
 }
 
 impl ReceiveWebhookUseCase {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         line_client: Arc<dyn LineClient>,
         user_repo: Arc<dyn UserRepository>,
@@ -108,7 +108,9 @@ impl ReceiveWebhookUseCase {
         self.config_repo
             .get("rich_menu_no_session")
             .await?
-            .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: rich_menu_no_session")))
+            .ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: rich_menu_no_session"))
+            })
     }
 
     async fn resolve_welcome_credits(&self) -> Result<i32, UsecaseError> {
@@ -116,10 +118,12 @@ impl ReceiveWebhookUseCase {
             .config_repo
             .get("welcome_credits")
             .await?
-            .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: welcome_credits")))?;
-        value
-            .parse::<i32>()
-            .map_err(|e| UsecaseError::Infra(anyhow::anyhow!("Invalid app_config welcome_credits: {}", e)))
+            .ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: welcome_credits"))
+            })?;
+        value.parse::<i32>().map_err(|e| {
+            UsecaseError::Infra(anyhow::anyhow!("Invalid app_config welcome_credits: {}", e))
+        })
     }
 
     pub async fn execute(
@@ -226,10 +230,7 @@ impl ReceiveWebhookUseCase {
             }
             "image" => {
                 let user = self.sync_user_from_line(line_user_id).await?;
-                let image_info = format!(
-                    "image:{}",
-                    message.id.as_deref().unwrap_or("unknown")
-                );
+                let image_info = format!("image:{}", message.id.as_deref().unwrap_or("unknown"));
 
                 self.create_and_dispatch_job(
                     JobMode::ImageMessage,
@@ -267,13 +268,13 @@ impl ReceiveWebhookUseCase {
         let user = self.sync_user_from_line(line_user_id).await?;
 
         // Build greeting messages (Thai, playful/inviting tone)
-        let welcome_text = "สวัสดีค่า~ ยินดีต้อนรับสู่ KhuiAI นะคะ ✨\nที่นี่คุณสามารถแชทกับตัวละคร AI สุดพิเศษได้แบบเรียลไทม์เลยค่ะ";
-        let cta_text = format!(
-            "เลือกตัวละครที่ชอบแล้วเริ่มแชทกันเลย!\n{}",
-            self.liff_base_url
-        );
+        let welcome_text =
+            "สวัสดีค่า~ ยินดีต้อนรับสู่ KhuiAI นะคะ ✨\nที่นี่คุณสามารถแชทกับตัวละคร AI สุดพิเศษได้แบบเรียลไทม์เลยค่ะ";
+        let cta_text = format!("เลือกตัวละครที่ชอบแล้วเริ่มแชทกันเลย!\n{}", self.liff_base_url);
         let messages = vec![
-            LineReplyMessage { text: welcome_text.to_string() },
+            LineReplyMessage {
+                text: welcome_text.to_string(),
+            },
             LineReplyMessage { text: cta_text },
         ];
 
@@ -388,13 +389,15 @@ impl ReceiveWebhookUseCase {
                 Ok(user)
             }
             None => {
-                let user =
-                    User::new(line_user_id.to_string(), profile.display_name, profile.picture_url);
+                let user = User::new(
+                    line_user_id.to_string(),
+                    profile.display_name,
+                    profile.picture_url,
+                );
                 self.user_repo.upsert(&user).await?;
 
                 let welcome_credits = self.resolve_welcome_credits().await?;
-                let balance =
-                    CreditBalance::new(user.id().clone(), welcome_credits);
+                let balance = CreditBalance::new(user.id().clone(), welcome_credits);
                 self.credit_repo.create_balance(&balance).await?;
 
                 tracing::info!(

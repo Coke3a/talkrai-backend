@@ -47,6 +47,7 @@ impl RoleplaySession {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: SessionId,
         user_id: UserId,

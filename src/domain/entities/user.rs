@@ -13,11 +13,7 @@ pub struct User {
 }
 
 impl User {
-    pub fn new(
-        line_user_id: String,
-        display_name: String,
-        picture_url: Option<String>,
-    ) -> Self {
+    pub fn new(line_user_id: String, display_name: String, picture_url: Option<String>) -> Self {
         let now = Utc::now();
         Self {
             id: UserId::new(),

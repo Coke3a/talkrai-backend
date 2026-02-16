@@ -6,6 +6,8 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 use crate::domain::entities::RoleplaySession;
 use crate::domain::repositories::{RepoError, RoleplaySessionRepository};
 use crate::domain::value_objects::{
@@ -152,22 +154,20 @@ impl RoleplaySessionRepository for RoleplaySessionPostgres {
     async fn update(&self, session: &RoleplaySession) -> Result<(), RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 
-        let rows_affected =
-            diesel::update(roleplay_sessions::table.find(session.id().as_uuid()))
-                .set((
-                    roleplay_sessions::status.eq(session.status().as_str()),
-                    roleplay_sessions::mood.eq(session.mood().as_str()),
-                    roleplay_sessions::relationship_level
-                        .eq(session.relationship_level().as_str()),
-                    roleplay_sessions::message_count.eq(session.message_count()),
-                    roleplay_sessions::current_location.eq(session.current_location()),
-                    roleplay_sessions::scene_time.eq(session.scene_time()),
-                    roleplay_sessions::scene_summary.eq(session.scene_summary()),
-                    roleplay_sessions::updated_at.eq(session.updated_at()),
-                ))
-                .execute(&mut conn)
-                .await
-                .map_err(|e| map_diesel_error("roleplay_session.update", e))?;
+        let rows_affected = diesel::update(roleplay_sessions::table.find(session.id().as_uuid()))
+            .set((
+                roleplay_sessions::status.eq(session.status().as_str()),
+                roleplay_sessions::mood.eq(session.mood().as_str()),
+                roleplay_sessions::relationship_level.eq(session.relationship_level().as_str()),
+                roleplay_sessions::message_count.eq(session.message_count()),
+                roleplay_sessions::current_location.eq(session.current_location()),
+                roleplay_sessions::scene_time.eq(session.scene_time()),
+                roleplay_sessions::scene_summary.eq(session.scene_summary()),
+                roleplay_sessions::updated_at.eq(session.updated_at()),
+            ))
+            .execute(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("roleplay_session.update", e))?;
 
         if rows_affected == 0 {
             return Err(RepoError::NotFound(format!(

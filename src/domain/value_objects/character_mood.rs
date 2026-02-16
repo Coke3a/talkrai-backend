@@ -27,8 +27,12 @@ impl CharacterMood {
             Self::Worried => "worried",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
+impl std::str::FromStr for CharacterMood {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "neutral" => Ok(Self::Neutral),
             "happy" => Ok(Self::Happy),

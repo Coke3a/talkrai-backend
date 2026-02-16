@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest};
+use crate::domain::services::ai_client::{
+    AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest,
+};
 use crate::domain::services::AiClientError;
 
 use super::response::{build_summary_system_prompt, parse_llm_response};
@@ -106,10 +108,9 @@ impl AiClient for VeniceClient {
             return Err(AiClientError::ApiError { status, message });
         }
 
-        let venice_resp: VeniceResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::ParseError(format!("Failed to deserialize Venice response: {e}")))?;
+        let venice_resp: VeniceResponse = response.json().await.map_err(|e| {
+            AiClientError::ParseError(format!("Failed to deserialize Venice response: {e}"))
+        })?;
 
         let text = venice_resp
             .choices
@@ -120,10 +121,7 @@ impl AiClient for VeniceClient {
         parse_llm_response(text)
     }
 
-    async fn generate_summary(
-        &self,
-        request: AiSummaryRequest,
-    ) -> Result<String, AiClientError> {
+    async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError> {
         let system_prompt = build_summary_system_prompt(&request.existing_summary);
 
         let mut messages = Vec::with_capacity(request.messages_to_summarize.len() + 1);
@@ -166,16 +164,19 @@ impl AiClient for VeniceClient {
             return Err(AiClientError::ApiError { status, message });
         }
 
-        let venice_resp: VeniceResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::ParseError(format!("Failed to deserialize Venice summary response: {e}")))?;
+        let venice_resp: VeniceResponse = response.json().await.map_err(|e| {
+            AiClientError::ParseError(format!(
+                "Failed to deserialize Venice summary response: {e}"
+            ))
+        })?;
 
         let text = venice_resp
             .choices
             .first()
             .and_then(|c| c.message.content.as_deref())
-            .ok_or_else(|| AiClientError::ParseError("No content in Venice summary response".into()))?;
+            .ok_or_else(|| {
+                AiClientError::ParseError("No content in Venice summary response".into())
+            })?;
 
         Ok(text.trim().to_string())
     }

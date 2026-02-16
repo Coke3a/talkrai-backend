@@ -6,9 +6,13 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 use crate::domain::entities::Scene;
 use crate::domain::repositories::{RepoError, SceneRepository};
-use crate::domain::value_objects::{CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName};
+use crate::domain::value_objects::{
+    CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName,
+};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::scenes;
 
@@ -50,8 +54,7 @@ impl SceneRow {
             self.is_active,
             RelationshipLevel::from_str(&self.start_relationship_level)
                 .expect("invalid start_relationship_level in DB"),
-            CharacterMood::from_str(&self.start_mood)
-                .expect("invalid start_mood in DB"),
+            CharacterMood::from_str(&self.start_mood).expect("invalid start_mood in DB"),
             self.created_at,
             self.updated_at,
         )

@@ -18,19 +18,6 @@ impl JobStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
-        match s {
-            "pending" => Ok(Self::Pending),
-            "processing" => Ok(Self::Processing),
-            "completed" => Ok(Self::Completed),
-            "failed" => Ok(Self::Failed),
-            _ => Err(DomainError::InvalidField {
-                field: "job_status",
-                reason: "invalid job status value",
-            }),
-        }
-    }
-
     pub fn transition_to(&self, target: &JobStatus) -> Result<(), DomainError> {
         let valid = matches!(
             (self, target),
@@ -52,5 +39,22 @@ impl JobStatus {
 
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Completed | Self::Failed)
+    }
+}
+
+impl std::str::FromStr for JobStatus {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pending" => Ok(Self::Pending),
+            "processing" => Ok(Self::Processing),
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err(DomainError::InvalidField {
+                field: "job_status",
+                reason: "invalid job status value",
+            }),
+        }
     }
 }

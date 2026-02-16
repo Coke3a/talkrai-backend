@@ -11,10 +11,7 @@ pub trait AiClient: Send + Sync {
     ) -> Result<AiRoleplayResponse, AiClientError>;
 
     /// Generate a summary of conversation messages
-    async fn generate_summary(
-        &self,
-        request: AiSummaryRequest,
-    ) -> Result<String, AiClientError>;
+    async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError>;
 }
 
 pub struct AiRoleplayRequest {

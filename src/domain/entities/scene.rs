@@ -1,6 +1,8 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::value_objects::{CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName};
+use crate::domain::value_objects::{
+    CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName,
+};
 
 pub struct Scene {
     id: SceneId,
@@ -21,6 +23,7 @@ pub struct Scene {
 }
 
 impl Scene {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         character_id: CharacterId,
         name: SceneName,
@@ -54,6 +57,7 @@ impl Scene {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: SceneId,
         character_id: CharacterId,

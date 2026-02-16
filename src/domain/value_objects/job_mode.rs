@@ -21,8 +21,12 @@ impl JobMode {
             Self::PostbackEvent => "postback_event",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
+impl std::str::FromStr for JobMode {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "roleplay_message" => Ok(Self::RoleplayMessage),
             "sticker_message" => Ok(Self::StickerMessage),

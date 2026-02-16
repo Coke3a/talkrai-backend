@@ -16,18 +16,6 @@ impl SessionStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
-        match s {
-            "active" => Ok(Self::Active),
-            "paused" => Ok(Self::Paused),
-            "ended" => Ok(Self::Ended),
-            _ => Err(DomainError::InvalidField {
-                field: "session_status",
-                reason: "invalid session status value",
-            }),
-        }
-    }
-
     pub fn transition_to(&self, target: &SessionStatus) -> Result<(), DomainError> {
         let valid = matches!(
             (self, target),
@@ -54,5 +42,21 @@ impl SessionStatus {
 
     pub fn is_active(&self) -> bool {
         matches!(self, Self::Active)
+    }
+}
+
+impl std::str::FromStr for SessionStatus {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(Self::Active),
+            "paused" => Ok(Self::Paused),
+            "ended" => Ok(Self::Ended),
+            _ => Err(DomainError::InvalidField {
+                field: "session_status",
+                reason: "invalid session status value",
+            }),
+        }
     }
 }

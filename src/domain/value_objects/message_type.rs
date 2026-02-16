@@ -20,7 +20,25 @@ impl MessageType {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
+    /// Classify user input text into message type
+    pub fn classify_user_input(text: &str) -> Self {
+        let trimmed = text.trim();
+        let has_action = trimmed.contains('*');
+        let has_dialogue = !trimmed.replace('*', "").trim().is_empty() && !trimmed.starts_with('*')
+            || !trimmed.ends_with('*');
+
+        match (has_dialogue, has_action) {
+            (true, true) => Self::Mixed,
+            (false, true) => Self::Action,
+            _ => Self::Dialogue,
+        }
+    }
+}
+
+impl std::str::FromStr for MessageType {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "dialogue" => Ok(Self::Dialogue),
             "action" => Ok(Self::Action),
@@ -31,21 +49,6 @@ impl MessageType {
                 field: "message_type",
                 reason: "invalid message type value",
             }),
-        }
-    }
-
-    /// Classify user input text into message type
-    pub fn classify_user_input(text: &str) -> Self {
-        let trimmed = text.trim();
-        let has_action = trimmed.contains('*');
-        let has_dialogue = trimmed.replace('*', "").trim().len() > 0
-            && !trimmed.starts_with('*')
-            || !trimmed.ends_with('*');
-
-        match (has_dialogue, has_action) {
-            (true, true) => Self::Mixed,
-            (false, true) => Self::Action,
-            _ => Self::Dialogue,
         }
     }
 }

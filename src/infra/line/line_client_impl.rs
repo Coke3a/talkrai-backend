@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use uuid::Uuid;
 
-use crate::domain::services::line_client::{LineClient, LineMessage, LineProfile, LineReplyMessage};
+use crate::domain::services::line_client::{
+    LineClient, LineMessage, LineProfile, LineReplyMessage,
+};
 use crate::domain::services::LineClientError;
 
 const LINE_API_PUSH: &str = "https://api.line.me/v2/bot/message/push";
@@ -313,10 +315,7 @@ impl LineClient for LineClientImpl {
     }
 
     async fn unlink_rich_menu(&self, line_user_id: &str) -> Result<(), LineClientError> {
-        let url = format!(
-            "https://api.line.me/v2/bot/user/{}/richmenu",
-            line_user_id
-        );
+        let url = format!("https://api.line.me/v2/bot/user/{}/richmenu", line_user_id);
 
         let response = self
             .http

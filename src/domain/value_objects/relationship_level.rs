@@ -18,19 +18,6 @@ impl RelationshipLevel {
         }
     }
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
-        match s {
-            "stranger" => Ok(Self::Stranger),
-            "acquaintance" => Ok(Self::Acquaintance),
-            "friend" => Ok(Self::Friend),
-            "close_friend" => Ok(Self::CloseFriend),
-            _ => Err(DomainError::InvalidField {
-                field: "relationship_level",
-                reason: "invalid relationship level value",
-            }),
-        }
-    }
-
     /// Number of messages required to advance to the next level
     pub fn messages_threshold(&self) -> Option<u32> {
         match self {
@@ -57,6 +44,23 @@ impl RelationshipLevel {
             Self::Acquaintance => Some(Self::Friend),
             Self::Friend => Some(Self::CloseFriend),
             Self::CloseFriend => None,
+        }
+    }
+}
+
+impl std::str::FromStr for RelationshipLevel {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "stranger" => Ok(Self::Stranger),
+            "acquaintance" => Ok(Self::Acquaintance),
+            "friend" => Ok(Self::Friend),
+            "close_friend" => Ok(Self::CloseFriend),
+            _ => Err(DomainError::InvalidField {
+                field: "relationship_level",
+                reason: "invalid relationship level value",
+            }),
         }
     }
 }

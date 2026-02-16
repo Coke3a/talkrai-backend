@@ -15,8 +15,12 @@ impl MessageRole {
             Self::Character => "character",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
+impl std::str::FromStr for MessageRole {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "user" => Ok(Self::User),
             "narrator" => Ok(Self::Narrator),

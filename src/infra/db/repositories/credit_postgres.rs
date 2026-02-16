@@ -153,13 +153,11 @@ impl CreditRepository for CreditPostgres {
         conn.transaction::<_, diesel::result::Error, _>(|conn| {
             async move {
                 let rows_affected = diesel::update(
-                    credit_balances::table
-                        .filter(credit_balances::user_id.eq(user_uuid)),
+                    credit_balances::table.filter(credit_balances::user_id.eq(user_uuid)),
                 )
                 .set((
                     credit_balances::balance.eq(credit_balances::balance - amount),
-                    credit_balances::total_consumed
-                        .eq(credit_balances::total_consumed + amount),
+                    credit_balances::total_consumed.eq(credit_balances::total_consumed + amount),
                     credit_balances::updated_at.eq(now),
                 ))
                 .execute(conn)

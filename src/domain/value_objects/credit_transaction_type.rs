@@ -19,8 +19,12 @@ impl CreditTransactionType {
             Self::Adjustment => "adjustment",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, DomainError> {
+impl std::str::FromStr for CreditTransactionType {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "purchase" => Ok(Self::Purchase),
             "consumption" => Ok(Self::Consumption),

@@ -18,8 +18,8 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::DotEnvyConfig;
 use crate::domain::repositories::{
-    AppConfigRepository, CharacterRepository, CreditRepository,
-    JobRepository, MessageRepository, RoleplaySessionRepository, SceneRepository, UserRepository,
+    AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
+    RoleplaySessionRepository, SceneRepository, UserRepository,
 };
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
@@ -43,8 +43,13 @@ pub struct AppState {
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
     init_tracing();
 
-    let (repos, line_client, ai_client, config_repo) =
-        create_infrastructure(&config, &db_pool);
+    let infra = create_infrastructure(&config, &db_pool);
+    let Infrastructure {
+        repos,
+        line_client,
+        ai_client,
+        config_repo,
+    } = infra;
 
     let (job_sender, job_receiver) =
         mpsc::channel::<JobId>(config.background_tasks.job_channel_capacity);
@@ -131,6 +136,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
         .with_state(state)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_background_tasks(
     repos: &Repositories,
     line_client: &Arc<dyn LineClient>,
@@ -223,22 +229,21 @@ struct Repositories {
     credit_repo: Arc<dyn CreditRepository>,
 }
 
-fn create_infrastructure(
-    config: &DotEnvyConfig,
-    db_pool: &Arc<PgPool>,
-) -> (
-    Repositories,
-    Arc<dyn LineClient>,
-    Arc<dyn AiClient>,
-    Arc<dyn AppConfigRepository>,
-) {
+struct Infrastructure {
+    repos: Repositories,
+    line_client: Arc<dyn LineClient>,
+    ai_client: Arc<dyn AiClient>,
+    config_repo: Arc<dyn AppConfigRepository>,
+}
+
+fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infrastructure {
     use crate::infra::ai::claude_client::ClaudeClient;
     use crate::infra::ai::openai_client::OpenAiClient;
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CharacterPostgres, CreditPostgres,
-        JobPostgres, MessagePostgres, RoleplaySessionPostgres, ScenePostgres, UserPostgres,
+        AppConfigPostgres, CharacterPostgres, CreditPostgres, JobPostgres, MessagePostgres,
+        RoleplaySessionPostgres, ScenePostgres, UserPostgres,
     };
 
     let repos = Repositories {
@@ -251,22 +256,17 @@ fn create_infrastructure(
         credit_repo: Arc::new(CreditPostgres::new(Arc::clone(db_pool))),
     };
 
-    let line_client: Arc<dyn LineClient> = Arc::new(
-        crate::infra::line::LineClientImpl::new(
-            config.line.channel_secret.clone(),
-            config.line.channel_access_token.clone(),
-        ),
-    );
+    let line_client: Arc<dyn LineClient> = Arc::new(crate::infra::line::LineClientImpl::new(
+        config.line.channel_secret.clone(),
+        config.line.channel_access_token.clone(),
+    ));
 
     let config_repo: Arc<dyn crate::domain::repositories::AppConfigRepository> =
         Arc::new(AppConfigPostgres::new(Arc::clone(db_pool)));
 
-    let claude: Arc<dyn AiClient> =
-        Arc::new(ClaudeClient::new(config.ai.claude_api_key.clone()));
-    let openai: Arc<dyn AiClient> =
-        Arc::new(OpenAiClient::new(config.ai.openai_api_key.clone()));
-    let venice: Arc<dyn AiClient> =
-        Arc::new(VeniceClient::new(config.ai.venice_api_key.clone()));
+    let claude: Arc<dyn AiClient> = Arc::new(ClaudeClient::new(config.ai.claude_api_key.clone()));
+    let openai: Arc<dyn AiClient> = Arc::new(OpenAiClient::new(config.ai.openai_api_key.clone()));
+    let venice: Arc<dyn AiClient> = Arc::new(VeniceClient::new(config.ai.venice_api_key.clone()));
 
     let ai_client: Arc<dyn AiClient> = Arc::new(LlmRouter::new(
         claude,
@@ -276,5 +276,10 @@ fn create_infrastructure(
         config.ai.default_provider.clone(),
     ));
 
-    (repos, line_client, ai_client, config_repo)
+    Infrastructure {
+        repos,
+        line_client,
+        ai_client,
+        config_repo,
+    }
 }

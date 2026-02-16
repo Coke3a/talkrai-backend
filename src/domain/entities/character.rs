@@ -42,6 +42,7 @@ impl Character {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: CharacterId,
         name: CharacterName,

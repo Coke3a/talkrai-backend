@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::domain::services::ai_client::{AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest};
+use crate::domain::services::ai_client::{
+    AiClient, AiRoleplayRequest, AiRoleplayResponse, AiSummaryRequest,
+};
 use crate::domain::services::AiClientError;
 
 use super::response::{build_summary_system_prompt, parse_llm_response};
@@ -99,10 +101,9 @@ impl AiClient for ClaudeClient {
             return Err(AiClientError::ApiError { status, message });
         }
 
-        let claude_resp: ClaudeResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::ParseError(format!("Failed to deserialize Claude response: {e}")))?;
+        let claude_resp: ClaudeResponse = response.json().await.map_err(|e| {
+            AiClientError::ParseError(format!("Failed to deserialize Claude response: {e}"))
+        })?;
 
         let text = claude_resp
             .content
@@ -114,10 +115,7 @@ impl AiClient for ClaudeClient {
         parse_llm_response(text)
     }
 
-    async fn generate_summary(
-        &self,
-        request: AiSummaryRequest,
-    ) -> Result<String, AiClientError> {
+    async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError> {
         let system_prompt = build_summary_system_prompt(&request.existing_summary);
 
         let body = ClaudeRequest {
@@ -157,17 +155,20 @@ impl AiClient for ClaudeClient {
             return Err(AiClientError::ApiError { status, message });
         }
 
-        let claude_resp: ClaudeResponse = response
-            .json()
-            .await
-            .map_err(|e| AiClientError::ParseError(format!("Failed to deserialize Claude summary response: {e}")))?;
+        let claude_resp: ClaudeResponse = response.json().await.map_err(|e| {
+            AiClientError::ParseError(format!(
+                "Failed to deserialize Claude summary response: {e}"
+            ))
+        })?;
 
         let text = claude_resp
             .content
             .iter()
             .find(|b| b.block_type == "text")
             .and_then(|b| b.text.as_deref())
-            .ok_or_else(|| AiClientError::ParseError("No text block in Claude summary response".into()))?;
+            .ok_or_else(|| {
+                AiClientError::ParseError("No text block in Claude summary response".into())
+            })?;
 
         Ok(text.trim().to_string())
     }

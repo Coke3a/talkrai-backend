@@ -6,6 +6,8 @@ use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 use crate::domain::entities::Job;
 use crate::domain::repositories::{JobRepository, RepoError};
 use crate::domain::value_objects::{JobId, JobMode, JobStatus, SessionId, UserId};
@@ -200,10 +202,7 @@ impl JobRepository for JobPostgres {
             .map_err(|e| map_diesel_error("job.update", e))?;
 
         if rows_affected == 0 {
-            return Err(RepoError::NotFound(format!(
-                "Job {} not found",
-                job.id()
-            )));
+            return Err(RepoError::NotFound(format!("Job {} not found", job.id())));
         }
 
         Ok(())

@@ -1,13 +1,16 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use serde_json::json;
 
 use crate::domain::entities::{Character, Job, Message, RoleplaySession, Scene};
 use crate::domain::repositories::{
-    AppConfigRepository, CharacterRepository, CreditRepository,
-    JobRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
+    AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
+    RoleplaySessionRepository, SceneRepository,
 };
-use crate::domain::services::ai_client::{AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest};
+use crate::domain::services::ai_client::{
+    AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
+};
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, MessageType};
 use crate::usecases::UsecaseError;
@@ -20,9 +23,7 @@ pub fn build_system_prompt(
     let location = session
         .current_location()
         .unwrap_or_else(|| scene.location());
-    let time = session
-        .scene_time()
-        .unwrap_or_else(|| scene.time_of_day());
+    let time = session.scene_time().unwrap_or_else(|| scene.time_of_day());
 
     let mut prompt = format!(
         r#"You are "{}".
@@ -92,15 +93,14 @@ pub fn build_ai_messages(
             }
             MessageRole::Narrator => {
                 let narrator_text = recent_messages[i].content().to_string();
-                let character_text =
-                    if i + 1 < recent_messages.len()
-                        && *recent_messages[i + 1].role() == MessageRole::Character
-                    {
-                        i += 1;
-                        recent_messages[i].content().to_string()
-                    } else {
-                        String::new()
-                    };
+                let character_text = if i + 1 < recent_messages.len()
+                    && *recent_messages[i + 1].role() == MessageRole::Character
+                {
+                    i += 1;
+                    recent_messages[i].content().to_string()
+                } else {
+                    String::new()
+                };
 
                 ai_messages.push(AiMessage {
                     role: "assistant".to_string(),
@@ -164,6 +164,7 @@ pub struct ProcessRoleplayMessageInput {
 }
 
 impl ProcessRoleplayMessageUseCase {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         job_repo: Arc<dyn JobRepository>,
         session_repo: Arc<dyn RoleplaySessionRepository>,
@@ -189,7 +190,12 @@ impl ProcessRoleplayMessageUseCase {
     }
 
     async fn resolve_config(&self) -> Result<ResolvedConfig, UsecaseError> {
-        let keys = &["narrator_display_name", "narrator_avatar_url", "ai_max_tokens", "summarize_interval"];
+        let keys = &[
+            "narrator_display_name",
+            "narrator_avatar_url",
+            "ai_max_tokens",
+            "summarize_interval",
+        ];
         let map = self.config_repo.get_many(keys).await?;
 
         let summarize_interval = map
@@ -197,19 +203,21 @@ impl ProcessRoleplayMessageUseCase {
             .and_then(|v| v.parse::<u32>().ok());
 
         Ok(ResolvedConfig {
-            narrator_display_name: map
-                .get("narrator_display_name")
-                .cloned()
-                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_display_name")))?,
-            narrator_avatar_url: map
-                .get("narrator_avatar_url")
-                .cloned()
-                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_avatar_url")))?,
+            narrator_display_name: map.get("narrator_display_name").cloned().ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_display_name"))
+            })?,
+            narrator_avatar_url: map.get("narrator_avatar_url").cloned().ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_avatar_url"))
+            })?,
             ai_max_tokens: map
                 .get("ai_max_tokens")
-                .ok_or_else(|| UsecaseError::Infra(anyhow::anyhow!("Missing app_config: ai_max_tokens")))?
+                .ok_or_else(|| {
+                    UsecaseError::Infra(anyhow::anyhow!("Missing app_config: ai_max_tokens"))
+                })?
                 .parse::<u32>()
-                .map_err(|e| UsecaseError::Infra(anyhow::anyhow!("Invalid app_config ai_max_tokens: {}", e)))?,
+                .map_err(|e| {
+                    UsecaseError::Infra(anyhow::anyhow!("Invalid app_config ai_max_tokens: {}", e))
+                })?,
             summarize_interval,
         })
     }
@@ -253,15 +261,29 @@ impl ProcessRoleplayMessageUseCase {
 
         // Parallel fetch: character, scene, messages (all depend on session but not each other)
         let (character_opt, scene_opt, recent_messages) = tokio::try_join!(
-            async { self.character_repo.find_by_id(session.character_id()).await.map_err(UsecaseError::from) },
-            async { self.scene_repo.find_by_id(session.scene_id()).await.map_err(UsecaseError::from) },
-            async { self.message_repo.find_by_session_id(session.id(), 20).await.map_err(UsecaseError::from) },
+            async {
+                self.character_repo
+                    .find_by_id(session.character_id())
+                    .await
+                    .map_err(UsecaseError::from)
+            },
+            async {
+                self.scene_repo
+                    .find_by_id(session.scene_id())
+                    .await
+                    .map_err(UsecaseError::from)
+            },
+            async {
+                self.message_repo
+                    .find_by_session_id(session.id(), 20)
+                    .await
+                    .map_err(UsecaseError::from)
+            },
         )?;
 
-        let character = character_opt
-            .ok_or_else(|| UsecaseError::NotFound("Character not found".into()))?;
-        let scene = scene_opt
-            .ok_or_else(|| UsecaseError::NotFound("Scene not found".into()))?;
+        let character =
+            character_opt.ok_or_else(|| UsecaseError::NotFound("Character not found".into()))?;
+        let scene = scene_opt.ok_or_else(|| UsecaseError::NotFound("Scene not found".into()))?;
 
         // 3. Check credits
         let credit_balance = self
@@ -361,7 +383,10 @@ impl ProcessRoleplayMessageUseCase {
             sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
         };
         self.line_client
-            .push_messages(job.line_user_id(), vec![narrator_line_msg, character_line_msg])
+            .push_messages(
+                job.line_user_id(),
+                vec![narrator_line_msg, character_line_msg],
+            )
             .await?;
 
         // 12. Mark job completed
@@ -387,7 +412,7 @@ impl ProcessRoleplayMessageUseCase {
         let message_count = session.message_count() as u32;
 
         // Only trigger at interval boundaries
-        if message_count % summarize_interval != 0 {
+        if !message_count.is_multiple_of(summarize_interval) {
             return;
         }
 
