@@ -22,6 +22,7 @@ struct UserRow {
     display_name: String,
     picture_url: Option<String>,
     language: String,
+    terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -34,6 +35,7 @@ impl UserRow {
             self.display_name,
             self.picture_url,
             self.language,
+            self.terms_accepted_at,
             self.created_at,
             self.updated_at,
         )

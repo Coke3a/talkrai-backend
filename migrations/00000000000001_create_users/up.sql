@@ -4,6 +4,7 @@ CREATE TABLE users (
     display_name    VARCHAR(255) NOT NULL,
     picture_url     TEXT,
     language        VARCHAR(10) NOT NULL DEFAULT 'th',
+    terms_accepted_at TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

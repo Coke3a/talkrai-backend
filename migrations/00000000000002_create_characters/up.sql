@@ -7,6 +7,7 @@ CREATE TABLE characters (
     system_prompt   TEXT NOT NULL,
     avatar_url      TEXT,
     genre_tags      TEXT[] NOT NULL DEFAULT '{}',
+    gender VARCHAR NOT NULL DEFAULT 'male' CHECK (gender IN ('male', 'female')),
     is_active       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()

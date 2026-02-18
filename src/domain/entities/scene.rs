@@ -16,8 +16,10 @@ pub struct Scene {
     opening_dialogue: String,
     is_default: bool,
     is_active: bool,
+    is_adult_content: bool,
     start_relationship_level: RelationshipLevel,
     start_mood: CharacterMood,
+    image_url: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -34,6 +36,7 @@ impl Scene {
         opening_narrator: String,
         opening_dialogue: String,
         is_default: bool,
+        is_adult_content: bool,
         start_relationship_level: RelationshipLevel,
         start_mood: CharacterMood,
     ) -> Self {
@@ -50,8 +53,10 @@ impl Scene {
             opening_dialogue,
             is_default,
             is_active: true,
+            is_adult_content,
             start_relationship_level,
             start_mood,
+            image_url: None,
             created_at: now,
             updated_at: now,
         }
@@ -70,8 +75,10 @@ impl Scene {
         opening_dialogue: String,
         is_default: bool,
         is_active: bool,
+        is_adult_content: bool,
         start_relationship_level: RelationshipLevel,
         start_mood: CharacterMood,
+        image_url: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -87,8 +94,10 @@ impl Scene {
             opening_dialogue,
             is_default,
             is_active,
+            is_adult_content,
             start_relationship_level,
             start_mood,
+            image_url,
             created_at,
             updated_at,
         }
@@ -138,12 +147,20 @@ impl Scene {
         self.is_active
     }
 
+    pub fn is_adult_content(&self) -> bool {
+        self.is_adult_content
+    }
+
     pub fn start_relationship_level(&self) -> &RelationshipLevel {
         &self.start_relationship_level
     }
 
     pub fn start_mood(&self) -> &CharacterMood {
         &self.start_mood
+    }
+
+    pub fn image_url(&self) -> Option<&str> {
+        self.image_url.as_deref()
     }
 
     pub fn created_at(&self) -> &DateTime<Utc> {

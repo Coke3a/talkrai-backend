@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::value_objects::{CharacterId, CharacterName};
+use crate::domain::value_objects::{CharacterGender, CharacterId, CharacterName};
 
 pub struct Character {
     id: CharacterId,
@@ -11,6 +11,7 @@ pub struct Character {
     system_prompt: String,
     avatar_url: Option<String>,
     genre_tags: Vec<String>,
+    gender: CharacterGender,
     is_active: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -25,6 +26,7 @@ impl Character {
         system_prompt: String,
         avatar_url: Option<String>,
         genre_tags: Vec<String>,
+        gender: CharacterGender,
     ) -> Self {
         let now = Utc::now();
         Self {
@@ -36,6 +38,7 @@ impl Character {
             system_prompt,
             avatar_url,
             genre_tags,
+            gender,
             is_active: true,
             created_at: now,
             updated_at: now,
@@ -52,6 +55,7 @@ impl Character {
         system_prompt: String,
         avatar_url: Option<String>,
         genre_tags: Vec<String>,
+        gender: CharacterGender,
         is_active: bool,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -65,6 +69,7 @@ impl Character {
             system_prompt,
             avatar_url,
             genre_tags,
+            gender,
             is_active,
             created_at,
             updated_at,
@@ -101,6 +106,10 @@ impl Character {
 
     pub fn genre_tags(&self) -> &[String] {
         &self.genre_tags
+    }
+
+    pub fn gender(&self) -> &CharacterGender {
+        &self.gender
     }
 
     pub fn is_active(&self) -> bool {

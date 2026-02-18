@@ -8,6 +8,7 @@ diesel::table! {
         display_name -> Varchar,
         picture_url -> Nullable<Text>,
         language -> Varchar,
+        terms_accepted_at -> Nullable<Timestamptz>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
     }
@@ -23,6 +24,7 @@ diesel::table! {
         system_prompt -> Text,
         avatar_url -> Nullable<Text>,
         genre_tags -> Array<Text>,
+        gender -> Varchar,
         is_active -> Bool,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
@@ -42,8 +44,10 @@ diesel::table! {
         opening_dialogue -> Text,
         is_default -> Bool,
         is_active -> Bool,
+        is_adult_content -> Bool,
         start_relationship_level -> Varchar,
         start_mood -> Varchar,
+        image_url -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
     }

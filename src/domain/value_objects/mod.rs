@@ -1,3 +1,4 @@
+pub mod character_gender;
 pub mod character_mood;
 pub mod character_name;
 pub mod credit_transaction_type;
@@ -7,9 +8,11 @@ pub mod job_status;
 pub mod message_role;
 pub mod message_type;
 pub mod relationship_level;
+pub mod relationship_thresholds;
 pub mod scene_name;
 pub mod session_status;
 
+pub use character_gender::CharacterGender;
 pub use character_mood::CharacterMood;
 pub use character_name::CharacterName;
 pub use credit_transaction_type::CreditTransactionType;
@@ -19,5 +22,6 @@ pub use job_status::JobStatus;
 pub use message_role::MessageRole;
 pub use message_type::MessageType;
 pub use relationship_level::RelationshipLevel;
+pub use relationship_thresholds::RelationshipThresholds;
 pub use scene_name::SceneName;
 pub use session_status::SessionStatus;

@@ -42,8 +42,14 @@ pub trait LineClient: Send + Sync {
     ) -> Result<(), LineClientError>;
 }
 
-pub struct LineReplyMessage {
-    pub text: String,
+pub enum LineReplyMessage {
+    Text {
+        text: String,
+    },
+    Flex {
+        alt_text: String,
+        contents: serde_json::Value,
+    },
 }
 
 pub struct LineMessage {

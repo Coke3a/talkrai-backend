@@ -12,7 +12,9 @@ use crate::domain::services::ai_client::{
     AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
-use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, MessageType};
+use crate::domain::value_objects::{
+    CharacterMood, JobId, MessageRole, MessageType, RelationshipThresholds,
+};
 use crate::usecases::UsecaseError;
 
 pub fn build_system_prompt(
@@ -33,6 +35,7 @@ pub fn build_system_prompt(
 Personality: {}
 Speaking style (voice anchor): {}
 Background: {}
+Gender: {}
 
 ## Scene
 {}
@@ -43,6 +46,7 @@ Location: {} | Time: {}"#,
         character.personality(),
         character.speaking_style(),
         character.background(),
+        character.gender().as_str(),
         scene.situation_prompt(),
         scene.atmosphere(),
         location,
@@ -157,6 +161,7 @@ struct ResolvedConfig {
     narrator_avatar_url: String,
     ai_max_tokens: u32,
     summarize_interval: Option<u32>,
+    relationship_thresholds: RelationshipThresholds,
 }
 
 pub struct ProcessRoleplayMessageInput {
@@ -195,12 +200,69 @@ impl ProcessRoleplayMessageUseCase {
             "narrator_avatar_url",
             "ai_max_tokens",
             "summarize_interval",
+            "relationship_threshold_acquaintance",
+            "relationship_threshold_friend",
+            "relationship_threshold_close_friend",
         ];
         let map = self.config_repo.get_many(keys).await?;
 
         let summarize_interval = map
             .get("summarize_interval")
             .and_then(|v| v.parse::<u32>().ok());
+
+        let threshold_acquaintance = map
+            .get("relationship_threshold_acquaintance")
+            .ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Missing app_config: relationship_threshold_acquaintance"
+                ))
+            })?
+            .parse::<u32>()
+            .map_err(|e| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Invalid app_config relationship_threshold_acquaintance: {}",
+                    e
+                ))
+            })?;
+
+        let threshold_friend = map
+            .get("relationship_threshold_friend")
+            .ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Missing app_config: relationship_threshold_friend"
+                ))
+            })?
+            .parse::<u32>()
+            .map_err(|e| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Invalid app_config relationship_threshold_friend: {}",
+                    e
+                ))
+            })?;
+
+        let threshold_close_friend = map
+            .get("relationship_threshold_close_friend")
+            .ok_or_else(|| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Missing app_config: relationship_threshold_close_friend"
+                ))
+            })?
+            .parse::<u32>()
+            .map_err(|e| {
+                UsecaseError::Infra(anyhow::anyhow!(
+                    "Invalid app_config relationship_threshold_close_friend: {}",
+                    e
+                ))
+            })?;
+
+        let relationship_thresholds = RelationshipThresholds::new(
+            threshold_acquaintance,
+            threshold_friend,
+            threshold_close_friend,
+        )
+        .map_err(|e| {
+            UsecaseError::Infra(anyhow::anyhow!("Invalid relationship thresholds: {}", e))
+        })?;
 
         Ok(ResolvedConfig {
             narrator_display_name: map.get("narrator_display_name").cloned().ok_or_else(|| {
@@ -219,6 +281,7 @@ impl ProcessRoleplayMessageUseCase {
                     UsecaseError::Infra(anyhow::anyhow!("Invalid app_config ai_max_tokens: {}", e))
                 })?,
             summarize_interval,
+            relationship_thresholds,
         })
     }
 
@@ -360,7 +423,7 @@ impl ProcessRoleplayMessageUseCase {
                 scene_update.summary.clone(),
             );
         }
-        let level_up = session.increment_messages();
+        let level_up = session.increment_messages(&cfg.relationship_thresholds);
         self.session_repo.update(&session).await?;
 
         if let Some(new_level) = level_up {
@@ -511,6 +574,7 @@ mod tests {
             "คุณเป็นเด็กสาวขายขนมปัง ชื่อมิโกะ อายุ 18 ปี".to_string(),
             Some("https://example.com/miko.png".to_string()),
             vec!["slice-of-life".to_string()],
+            CharacterGender::Female,
             true,
             chrono::Utc::now(),
             chrono::Utc::now(),
@@ -530,8 +594,10 @@ mod tests {
             "สวัสดีค่า~ ยินดีต้อนรับนะคะ".to_string(),
             true,
             true,
+            false,
             RelationshipLevel::Stranger,
             CharacterMood::Neutral,
+            None,
             chrono::Utc::now(),
             chrono::Utc::now(),
         )
@@ -568,6 +634,7 @@ mod tests {
         assert!(prompt.contains("ร่าเริง สดใส"));
         assert!(prompt.contains("พูดลงท้ายด้วย ~นะ"));
         assert!(prompt.contains("เด็กสาวขายขนมปังในหมู่บ้านเล็กๆ"));
+        assert!(prompt.contains("Gender: female"));
         assert!(prompt.contains("คุณเดินเข้ามาในร้านขนมปัง"));
         assert!(prompt.contains("อบอุ่น หอมกลิ่นขนมปัง"));
         assert!(prompt.contains("happy"));

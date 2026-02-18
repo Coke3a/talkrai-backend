@@ -32,8 +32,10 @@ struct SceneRow {
     opening_dialogue: String,
     is_default: bool,
     is_active: bool,
+    is_adult_content: bool,
     start_relationship_level: String,
     start_mood: String,
+    image_url: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -52,9 +54,11 @@ impl SceneRow {
             self.opening_dialogue,
             self.is_default,
             self.is_active,
+            self.is_adult_content,
             RelationshipLevel::from_str(&self.start_relationship_level)
                 .expect("invalid start_relationship_level in DB"),
             CharacterMood::from_str(&self.start_mood).expect("invalid start_mood in DB"),
+            self.image_url,
             self.created_at,
             self.updated_at,
         )

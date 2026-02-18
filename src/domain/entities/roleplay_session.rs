@@ -2,7 +2,8 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::error::DomainError;
 use crate::domain::value_objects::{
-    CharacterId, CharacterMood, RelationshipLevel, SceneId, SessionId, SessionStatus, UserId,
+    CharacterId, CharacterMood, RelationshipLevel, RelationshipThresholds, SceneId, SessionId,
+    SessionStatus, UserId,
 };
 
 pub struct RoleplaySession {
@@ -159,11 +160,21 @@ impl RoleplaySession {
     }
 
     /// Increment message count and check for relationship level up
-    pub fn increment_messages(&mut self) -> Option<RelationshipLevel> {
+    pub fn increment_messages(
+        &mut self,
+        thresholds: &RelationshipThresholds,
+    ) -> Option<RelationshipLevel> {
         self.message_count += 1;
         self.updated_at = Utc::now();
 
-        if let Some(threshold) = self.relationship_level.messages_threshold() {
+        let threshold = match self.relationship_level {
+            RelationshipLevel::Stranger => Some(thresholds.acquaintance_at()),
+            RelationshipLevel::Acquaintance => Some(thresholds.friend_at()),
+            RelationshipLevel::Friend => Some(thresholds.close_friend_at()),
+            RelationshipLevel::CloseFriend => None,
+        };
+
+        if let Some(threshold) = threshold {
             if self.message_count as u32 >= threshold {
                 if let Some(next_level) = self.relationship_level.next() {
                     self.relationship_level = next_level.clone();
@@ -191,5 +202,85 @@ impl RoleplaySession {
             self.scene_summary = Some(s);
         }
         self.updated_at = Utc::now();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::value_objects::{CharacterId, SceneId, SessionId, UserId};
+
+    fn default_thresholds() -> RelationshipThresholds {
+        RelationshipThresholds::new(20, 50, 100).unwrap()
+    }
+
+    fn session_at(level: RelationshipLevel, message_count: i32) -> RoleplaySession {
+        RoleplaySession::from_existing(
+            SessionId::new(),
+            UserId::new(),
+            CharacterId::new(),
+            SceneId::new(),
+            SessionStatus::Active,
+            CharacterMood::Neutral,
+            level,
+            message_count,
+            None,
+            None,
+            None,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    #[test]
+    fn no_level_up_before_threshold() {
+        let thresholds = default_thresholds();
+        let mut session = session_at(RelationshipLevel::Stranger, 18);
+        assert!(session.increment_messages(&thresholds).is_none());
+        assert_eq!(session.message_count(), 19);
+    }
+
+    #[test]
+    fn level_up_at_threshold() {
+        let thresholds = default_thresholds();
+        let mut session = session_at(RelationshipLevel::Stranger, 19);
+        let result = session.increment_messages(&thresholds);
+        assert_eq!(result, Some(RelationshipLevel::Acquaintance));
+        assert_eq!(
+            *session.relationship_level(),
+            RelationshipLevel::Acquaintance
+        );
+    }
+
+    #[test]
+    fn acquaintance_to_friend_at_threshold() {
+        let thresholds = default_thresholds();
+        let mut session = session_at(RelationshipLevel::Acquaintance, 49);
+        let result = session.increment_messages(&thresholds);
+        assert_eq!(result, Some(RelationshipLevel::Friend));
+    }
+
+    #[test]
+    fn friend_to_close_friend_at_threshold() {
+        let thresholds = default_thresholds();
+        let mut session = session_at(RelationshipLevel::Friend, 99);
+        let result = session.increment_messages(&thresholds);
+        assert_eq!(result, Some(RelationshipLevel::CloseFriend));
+    }
+
+    #[test]
+    fn close_friend_never_levels_up() {
+        let thresholds = default_thresholds();
+        let mut session = session_at(RelationshipLevel::CloseFriend, 200);
+        assert!(session.increment_messages(&thresholds).is_none());
+        assert_eq!(session.message_count(), 201);
+    }
+
+    #[test]
+    fn custom_thresholds_work() {
+        let thresholds = RelationshipThresholds::new(5, 10, 15).unwrap();
+        let mut session = session_at(RelationshipLevel::Stranger, 4);
+        let result = session.increment_messages(&thresholds);
+        assert_eq!(result, Some(RelationshipLevel::Acquaintance));
     }
 }

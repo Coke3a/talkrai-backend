@@ -18,16 +18,6 @@ impl RelationshipLevel {
         }
     }
 
-    /// Number of messages required to advance to the next level
-    pub fn messages_threshold(&self) -> Option<u32> {
-        match self {
-            Self::Stranger => Some(20),
-            Self::Acquaintance => Some(50),
-            Self::Friend => Some(100),
-            Self::CloseFriend => None,
-        }
-    }
-
     /// System prompt modifier based on relationship level
     pub fn relationship_prompt_modifier(&self) -> &'static str {
         match self {

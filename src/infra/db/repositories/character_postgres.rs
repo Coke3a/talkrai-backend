@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,7 +9,7 @@ use uuid::Uuid;
 
 use crate::domain::entities::Character;
 use crate::domain::repositories::{CharacterRepository, RepoError};
-use crate::domain::value_objects::{CharacterId, CharacterName};
+use crate::domain::value_objects::{CharacterGender, CharacterId, CharacterName};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::characters;
 
@@ -25,6 +26,7 @@ struct CharacterRow {
     system_prompt: String,
     avatar_url: Option<String>,
     genre_tags: Vec<String>,
+    gender: String,
     is_active: bool,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -41,6 +43,7 @@ impl CharacterRow {
             self.system_prompt,
             self.avatar_url,
             self.genre_tags,
+            CharacterGender::from_str(&self.gender).expect("invalid gender in DB"),
             self.is_active,
             self.created_at,
             self.updated_at,

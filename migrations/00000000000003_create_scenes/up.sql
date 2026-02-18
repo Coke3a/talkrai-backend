@@ -14,6 +14,8 @@ CREATE TABLE scenes (
                                 CHECK (start_relationship_level IN ('stranger', 'acquaintance', 'friend', 'close_friend')),
     start_mood                  VARCHAR NOT NULL DEFAULT 'neutral'
                                 CHECK (start_mood IN ('neutral', 'happy', 'sad', 'excited', 'angry', 'shy', 'playful', 'serious', 'worried')),
+    image_url           TEXT,
+    is_adult_content    BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );

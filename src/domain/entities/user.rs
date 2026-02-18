@@ -8,6 +8,7 @@ pub struct User {
     display_name: String,
     picture_url: Option<String>,
     language: String,
+    terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -21,17 +22,20 @@ impl User {
             display_name,
             picture_url,
             language: "th".to_string(),
+            terms_accepted_at: None,
             created_at: now,
             updated_at: now,
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: UserId,
         line_user_id: String,
         display_name: String,
         picture_url: Option<String>,
         language: String,
+        terms_accepted_at: Option<DateTime<Utc>>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -41,6 +45,7 @@ impl User {
             display_name,
             picture_url,
             language,
+            terms_accepted_at,
             created_at,
             updated_at,
         }
@@ -64,6 +69,14 @@ impl User {
 
     pub fn language(&self) -> &str {
         &self.language
+    }
+
+    pub fn terms_accepted_at(&self) -> Option<&DateTime<Utc>> {
+        self.terms_accepted_at.as_ref()
+    }
+
+    pub fn has_accepted_terms(&self) -> bool {
+        self.terms_accepted_at.is_some()
     }
 
     pub fn created_at(&self) -> &DateTime<Utc> {

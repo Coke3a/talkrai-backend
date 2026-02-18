@@ -33,7 +33,20 @@ struct PushMessageRequest {
 #[serde(rename_all = "camelCase")]
 struct ReplyMessageRequest {
     reply_token: String,
-    messages: Vec<TextMessageObject>,
+    messages: Vec<ReplyMessageObject>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(tag = "type")]
+enum ReplyMessageObject {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "flex")]
+    Flex {
+        #[serde(rename = "altText")]
+        alt_text: String,
+        contents: serde_json::Value,
+    },
 }
 
 #[derive(Serialize)]
@@ -222,10 +235,11 @@ impl LineClient for LineClientImpl {
             reply_token: reply_token.to_string(),
             messages: messages
                 .into_iter()
-                .map(|m| TextMessageObject {
-                    msg_type: "text",
-                    text: m.text,
-                    sender: None,
+                .map(|m| match m {
+                    LineReplyMessage::Text { text } => ReplyMessageObject::Text { text },
+                    LineReplyMessage::Flex { alt_text, contents } => {
+                        ReplyMessageObject::Flex { alt_text, contents }
+                    }
                 })
                 .collect(),
         };
