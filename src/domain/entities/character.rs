@@ -18,6 +18,7 @@ pub struct Character {
 }
 
 impl Character {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: CharacterName,
         personality: String,
