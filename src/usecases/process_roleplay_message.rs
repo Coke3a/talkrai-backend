@@ -15,7 +15,65 @@ use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::{
     CharacterMood, JobId, MessageRole, MessageType, RelationshipThresholds,
 };
+use crate::infra::line::roleplay_flex;
 use crate::usecases::UsecaseError;
+
+/// Convert JSON atmosphere blob to compact readable text.
+/// Plain text passes through unchanged.
+pub fn compact_atmosphere(atmosphere: &str) -> String {
+    let trimmed = atmosphere.trim();
+    if !trimmed.starts_with('{') {
+        return atmosphere.to_string();
+    }
+
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return atmosphere.to_string();
+    };
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // mood
+    if let Some(mood) = val.get("mood").and_then(|v| v.as_str()) {
+        parts.push(mood.to_string());
+    }
+
+    // tags
+    if let Some(tags) = val.get("tags").and_then(|v| v.as_array()) {
+        let tag_strs: Vec<&str> = tags.iter().filter_map(|t| t.as_str()).collect();
+        if !tag_strs.is_empty() {
+            parts.push(tag_strs.join(", "));
+        }
+    }
+
+    // sensory values
+    if let Some(sensory) = val.get("sensory").and_then(|v| v.as_object()) {
+        for (_key, v) in sensory {
+            if let Some(s) = v.as_str() {
+                if !s.is_empty() {
+                    parts.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        atmosphere.to_string()
+    } else {
+        parts.join(" | ")
+    }
+}
+
+/// Extract `color_tone` field from a JSON atmosphere string. Falls back to "neutral".
+fn extract_color_tone(atmosphere: &str) -> String {
+    let trimmed = atmosphere.trim();
+    if !trimmed.starts_with('{') {
+        return "neutral".to_string();
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| v.get("color_tone")?.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "neutral".to_string())
+}
 
 pub fn build_system_prompt(
     character: &Character,
@@ -28,37 +86,34 @@ pub fn build_system_prompt(
     let time = session.scene_time().unwrap_or_else(|| scene.time_of_day());
 
     let mut prompt = format!(
-        r#"You are "{}".
-
-{}
-
-Personality: {}
-Speaking style (voice anchor): {}
-Background: {}
-Gender: {}
-
-## Scene
-{}
-Atmosphere: {}
-Location: {} | Time: {}"#,
+        "You are \"{}\" ({}).\n\n{}",
         character.name().as_str(),
+        character.gender().as_str(),
         character.system_prompt(),
+    );
+
+    prompt.push_str(&format!(
+        "\n\nPersonality: {}\nSpeaking style: {}\nBackground: {}",
         character.personality(),
         character.speaking_style(),
         character.background(),
-        character.gender().as_str(),
+    ));
+
+    let atmosphere = compact_atmosphere(scene.atmosphere());
+    prompt.push_str(&format!(
+        "\n\n[Scene] {}\n{} | {} | {}",
         scene.situation_prompt(),
-        scene.atmosphere(),
         location,
         time,
-    );
+        atmosphere,
+    ));
 
     if let Some(summary) = session.scene_summary() {
-        prompt.push_str(&format!("\nRecent events: {}", summary));
+        prompt.push_str(&format!("\nRecent: {}", summary));
     }
 
     prompt.push_str(&format!(
-        "\n\nMood: {} (shift naturally with events)\nRelationship [{}]: {}",
+        "\n\nMood: {} | Relationship: {} — {}",
         session.mood().as_str(),
         session.relationship_level().as_str(),
         session.relationship_level().relationship_prompt_modifier(),
@@ -67,13 +122,8 @@ Location: {} | Time: {}"#,
     prompt.push_str(
         r#"
 
-## Output — valid JSON only, no other text
-- narrator_text: start with "📍 location • 🕒 time\n", then 3rd-person scene narration
-- character_text: in-character Thai dialogue matching your voice, mood & relationship
-- mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
-- scene_update: {"location":"…","time":"…","summary":"…"} or null
-
-{"narrator_text":"","character_text":"","mood":"","scene_update":null}"#,
+Reply with ONLY a JSON object. Both narrator_text and character_text are REQUIRED and must not be empty.
+{"narrator_text":"📍 loc • 🕒 time\n...","character_text":"...","mood":"neutral|happy|sad|excited|angry|shy|playful|serious|worried","scene_update":null}"#,
     );
 
     prompt
@@ -106,26 +156,32 @@ pub fn build_ai_messages(
                     String::new()
                 };
 
-                ai_messages.push(AiMessage {
-                    role: "assistant".to_string(),
-                    content: json!({
-                        "narrator_text": narrator_text,
-                        "character_text": character_text
-                    })
-                    .to_string(),
-                });
+                // Skip empty assistant messages to avoid noise and consecutive assistant issues
+                if !narrator_text.is_empty() || !character_text.is_empty() {
+                    ai_messages.push(AiMessage {
+                        role: "assistant".to_string(),
+                        content: json!({
+                            "narrator_text": narrator_text,
+                            "character_text": character_text
+                        })
+                        .to_string(),
+                    });
+                }
                 i += 1;
             }
             MessageRole::Character => {
                 // Orphan character message (shouldn't happen normally)
-                ai_messages.push(AiMessage {
-                    role: "assistant".to_string(),
-                    content: json!({
-                        "narrator_text": "",
-                        "character_text": recent_messages[i].content().to_string()
-                    })
-                    .to_string(),
-                });
+                let character_text = recent_messages[i].content().to_string();
+                if !character_text.is_empty() {
+                    ai_messages.push(AiMessage {
+                        role: "assistant".to_string(),
+                        content: json!({
+                            "narrator_text": "",
+                            "character_text": character_text
+                        })
+                        .to_string(),
+                    });
+                }
                 i += 1;
             }
         }
@@ -157,7 +213,9 @@ pub struct ProcessRoleplayMessageUseCase {
 }
 
 struct ResolvedConfig {
+    #[allow(dead_code)]
     narrator_display_name: String,
+    #[allow(dead_code)]
     narrator_avatar_url: String,
     ai_max_tokens: u32,
     summarize_interval: Option<u32>,
@@ -379,28 +437,33 @@ impl ProcessRoleplayMessageUseCase {
             })
             .await?;
 
-        // 8. Save 3 messages: user, narrator, character
+        // 8. Save messages: user + non-empty narrator/character
         let user_msg = Message::new(
             session.id().clone(),
             MessageRole::User,
             user_message_type,
             job.user_message().to_string(),
         );
-        let narrator_msg = Message::new(
-            session.id().clone(),
-            MessageRole::Narrator,
-            MessageType::Narration,
-            ai_response.narrator_text.clone(),
-        );
-        let character_msg = Message::new(
-            session.id().clone(),
-            MessageRole::Character,
-            MessageType::Dialogue,
-            ai_response.character_text.clone(),
-        );
-        self.message_repo
-            .create_many(&[user_msg, narrator_msg, character_msg])
-            .await?;
+        let mut messages_to_save = vec![user_msg];
+
+        if !ai_response.narrator_text.is_empty() {
+            messages_to_save.push(Message::new(
+                session.id().clone(),
+                MessageRole::Narrator,
+                MessageType::Narration,
+                ai_response.narrator_text.clone(),
+            ));
+        }
+        if !ai_response.character_text.is_empty() {
+            messages_to_save.push(Message::new(
+                session.id().clone(),
+                MessageRole::Character,
+                MessageType::Dialogue,
+                ai_response.character_text.clone(),
+            ));
+        }
+
+        self.message_repo.create_many(&messages_to_save).await?;
 
         // 9. Deduct credit
         let mut balance = credit_balance;
@@ -434,23 +497,46 @@ impl ProcessRoleplayMessageUseCase {
             );
         }
 
-        // 11. Push 2 LINE messages with Sender Override
-        let narrator_line_msg = LineMessage {
-            text: ai_response.narrator_text,
-            sender_name: cfg.narrator_display_name,
-            sender_icon_url: cfg.narrator_avatar_url,
-        };
-        let character_line_msg = LineMessage {
-            text: ai_response.character_text,
-            sender_name: character.name().as_str().to_string(),
-            sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
-        };
-        self.line_client
-            .push_messages(
-                job.line_user_id(),
-                vec![narrator_line_msg, character_line_msg],
-            )
-            .await?;
+        // 11. Push LINE Flex message (combined bubble)
+        let narrator_trimmed = ai_response.narrator_text.trim();
+        let character_trimmed = ai_response.character_text.trim();
+
+        if !narrator_trimmed.is_empty() || !character_trimmed.is_empty() {
+            let location = session
+                .current_location()
+                .unwrap_or_else(|| scene.location());
+            let time_of_day = session.scene_time().unwrap_or_else(|| scene.time_of_day());
+            let color_tone = extract_color_tone(scene.atmosphere());
+
+            let bubble = roleplay_flex::build_roleplay_bubble(
+                narrator_trimmed,
+                character_trimmed,
+                character.name().as_str(),
+                character.avatar_url(),
+                location,
+                time_of_day,
+                &color_tone,
+            );
+
+            // altText: prefer character for notification preview
+            let alt_source = if !character_trimmed.is_empty() {
+                character_trimmed
+            } else {
+                narrator_trimmed
+            };
+
+            self.line_client
+                .push_messages(
+                    job.line_user_id(),
+                    vec![LineMessage::Flex {
+                        alt_text: roleplay_flex::truncate_alt_text(alt_source),
+                        contents: bubble,
+                        sender_name: String::new(),
+                        sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                    }],
+                )
+                .await?;
+        }
 
         // 12. Mark job completed
         job.complete()?;
@@ -630,11 +716,12 @@ mod tests {
         let prompt = build_system_prompt(&character, &scene, &session);
 
         assert!(prompt.contains("มิโกะ"));
+        assert!(prompt.contains("(female)"));
         assert!(prompt.contains("คุณเป็นเด็กสาวขายขนมปัง"));
-        assert!(prompt.contains("ร่าเริง สดใส"));
-        assert!(prompt.contains("พูดลงท้ายด้วย ~นะ"));
-        assert!(prompt.contains("เด็กสาวขายขนมปังในหมู่บ้านเล็กๆ"));
-        assert!(prompt.contains("Gender: female"));
+        // Simple character → personality/style/background included
+        assert!(prompt.contains("Personality: ร่าเริง สดใส"));
+        assert!(prompt.contains("Speaking style: พูดลงท้ายด้วย ~นะ"));
+        assert!(prompt.contains("Background: เด็กสาวขายขนมปังในหมู่บ้านเล็กๆ"));
         assert!(prompt.contains("คุณเดินเข้ามาในร้านขนมปัง"));
         assert!(prompt.contains("อบอุ่น หอมกลิ่นขนมปัง"));
         assert!(prompt.contains("happy"));
@@ -664,9 +751,9 @@ mod tests {
 
         let prompt = build_system_prompt(&character, &scene, &session);
 
-        assert!(prompt.contains("Location: สวนสาธารณะ"));
-        assert!(prompt.contains("Time: เย็น"));
-        assert!(prompt.contains("Recent events: เดินออกจากร้าน"));
+        assert!(prompt.contains("สวนสาธารณะ"));
+        assert!(prompt.contains("เย็น"));
+        assert!(prompt.contains("Recent: เดินออกจากร้าน"));
         assert!(!prompt.contains("ร้านขนมปังเล็กๆ ริมถนน"));
     }
 
@@ -678,8 +765,8 @@ mod tests {
 
         let prompt = build_system_prompt(&character, &scene, &session);
 
-        assert!(prompt.contains("Location: ร้านขนมปังเล็กๆ ริมถนน"));
-        assert!(prompt.contains("Time: เช้า"));
+        assert!(prompt.contains("ร้านขนมปังเล็กๆ ริมถนน"));
+        assert!(prompt.contains("เช้า"));
     }
 
     #[test]
@@ -845,6 +932,26 @@ mod tests {
         assert!(prompt.contains("narrator_text"));
         assert!(prompt.contains("character_text"));
         assert!(prompt.contains("scene_update"));
-        assert!(prompt.contains("valid JSON only"));
+        assert!(prompt.contains("Reply with ONLY a JSON object"));
+    }
+
+    #[test]
+    fn compact_atmosphere_parses_json_blob() {
+        let json_atmo = r#"{"mood":"playful","tags":["สนุก","ท้าทาย"],"sensory":{"sight":"ร้านราเมนเล็กๆ","sound":"เสียงคนคุย","smell":"กลิ่นน้ำซุป"}}"#;
+        let result = compact_atmosphere(json_atmo);
+
+        assert!(result.contains("playful"));
+        assert!(result.contains("สนุก"));
+        assert!(result.contains("ท้าทาย"));
+        assert!(result.contains("ร้านราเมนเล็กๆ"));
+        assert!(result.contains("เสียงคนคุย"));
+        assert!(result.contains("กลิ่นน้ำซุป"));
+    }
+
+    #[test]
+    fn compact_atmosphere_passes_plain_text() {
+        let plain = "อบอุ่น หอมกลิ่นขนมปัง";
+        let result = compact_atmosphere(plain);
+        assert_eq!(result, plain);
     }
 }

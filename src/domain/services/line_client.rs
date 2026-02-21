@@ -52,10 +52,18 @@ pub enum LineReplyMessage {
     },
 }
 
-pub struct LineMessage {
-    pub text: String,
-    pub sender_name: String,
-    pub sender_icon_url: String,
+pub enum LineMessage {
+    Text {
+        text: String,
+        sender_name: String,
+        sender_icon_url: String,
+    },
+    Flex {
+        alt_text: String,
+        contents: serde_json::Value,
+        sender_name: String,
+        sender_icon_url: String,
+    },
 }
 
 pub struct LineProfile {

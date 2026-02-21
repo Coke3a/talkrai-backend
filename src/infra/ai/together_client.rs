@@ -9,20 +9,20 @@ use crate::domain::services::AiClientError;
 
 use super::response::{build_summary_system_prompt, parse_llm_response};
 
-const OPENAI_API_URL: &str = "https://api.openai.com/v1/chat/completions";
-const OPENAI_MODEL: &str = "gpt-4o-mini";
+const TOGETHER_API_URL: &str = "https://api.together.xyz/v1/chat/completions";
+const TOGETHER_MODEL: &str = "Qwen/Qwen3-235B-A22B-Instruct-2507-tput";
 
 // --- Request types ---
 
 #[derive(Serialize)]
-struct OpenAiRequest {
+struct TogetherRequest {
     model: &'static str,
     max_tokens: u32,
-    messages: Vec<OpenAiMessage>,
+    messages: Vec<TogetherMessage>,
 }
 
 #[derive(Serialize)]
-struct OpenAiMessage {
+struct TogetherMessage {
     role: String,
     content: String,
 }
@@ -30,26 +30,26 @@ struct OpenAiMessage {
 // --- Response types ---
 
 #[derive(Deserialize)]
-struct OpenAiResponse {
-    choices: Vec<OpenAiChoice>,
+struct TogetherResponse {
+    choices: Vec<TogetherChoice>,
 }
 
 #[derive(Deserialize)]
-struct OpenAiChoice {
-    message: OpenAiChoiceMessage,
+struct TogetherChoice {
+    message: TogetherChoiceMessage,
 }
 
 #[derive(Deserialize)]
-struct OpenAiChoiceMessage {
+struct TogetherChoiceMessage {
     content: Option<String>,
 }
 
-pub struct OpenAiClient {
+pub struct TogetherClient {
     http: Client,
     api_key: String,
 }
 
-impl OpenAiClient {
+impl TogetherClient {
     pub fn new(api_key: String) -> Self {
         Self {
             http: Client::new(),
@@ -59,36 +59,34 @@ impl OpenAiClient {
 }
 
 #[async_trait]
-impl AiClient for OpenAiClient {
-    /// https://platform.openai.com/docs/api-reference/chat/create
+impl AiClient for TogetherClient {
     async fn generate_roleplay_response(
         &self,
         request: AiRoleplayRequest,
     ) -> Result<AiRoleplayResponse, AiClientError> {
         let mut messages = Vec::with_capacity(request.messages.len() + 1);
 
-        // System prompt as first message with role "system"
-        messages.push(OpenAiMessage {
+        messages.push(TogetherMessage {
             role: "system".into(),
             content: request.system_prompt,
         });
 
         for m in request.messages {
-            messages.push(OpenAiMessage {
+            messages.push(TogetherMessage {
                 role: m.role,
                 content: m.content,
             });
         }
 
-        let body = OpenAiRequest {
-            model: OPENAI_MODEL,
+        let body = TogetherRequest {
+            model: TOGETHER_MODEL,
             max_tokens: request.max_tokens,
             messages,
         };
 
         tracing::debug!(
-            provider = "openai",
-            model = OPENAI_MODEL,
+            provider = "together",
+            model = TOGETHER_MODEL,
             max_tokens = body.max_tokens,
             message_count = body.messages.len(),
             body = %serde_json::to_string(&body).unwrap_or_default(),
@@ -97,7 +95,7 @@ impl AiClient for OpenAiClient {
 
         let response = self
             .http
-            .post(OPENAI_API_URL)
+            .post(TOGETHER_API_URL)
             .header("authorization", format!("Bearer {}", self.api_key))
             .header("content-type", "application/json")
             .json(&body)
@@ -115,7 +113,7 @@ impl AiClient for OpenAiClient {
             .map_err(|e| AiClientError::NetworkError(e.into()))?;
 
         tracing::debug!(
-            provider = "openai",
+            provider = "together",
             status,
             body = %response_text,
             "Received roleplay response from LLM"
@@ -128,15 +126,16 @@ impl AiClient for OpenAiClient {
             });
         }
 
-        let openai_resp: OpenAiResponse = serde_json::from_str(&response_text).map_err(|e| {
-            AiClientError::ParseError(format!("Failed to deserialize OpenAI response: {e}"))
-        })?;
+        let together_resp: TogetherResponse =
+            serde_json::from_str(&response_text).map_err(|e| {
+                AiClientError::ParseError(format!("Failed to deserialize Together response: {e}"))
+            })?;
 
-        let text = openai_resp
+        let text = together_resp
             .choices
             .first()
             .and_then(|c| c.message.content.as_deref())
-            .ok_or_else(|| AiClientError::ParseError("No content in OpenAI response".into()))?;
+            .ok_or_else(|| AiClientError::ParseError("No content in Together response".into()))?;
 
         parse_llm_response(text)
     }
@@ -145,26 +144,26 @@ impl AiClient for OpenAiClient {
         let system_prompt = build_summary_system_prompt(&request.existing_summary);
 
         let mut messages = Vec::with_capacity(request.messages_to_summarize.len() + 1);
-        messages.push(OpenAiMessage {
+        messages.push(TogetherMessage {
             role: "system".into(),
             content: system_prompt,
         });
         for m in request.messages_to_summarize {
-            messages.push(OpenAiMessage {
+            messages.push(TogetherMessage {
                 role: m.role,
                 content: m.content,
             });
         }
 
-        let body = OpenAiRequest {
-            model: OPENAI_MODEL,
+        let body = TogetherRequest {
+            model: TOGETHER_MODEL,
             max_tokens: request.max_tokens,
             messages,
         };
 
         tracing::debug!(
-            provider = "openai",
-            model = OPENAI_MODEL,
+            provider = "together",
+            model = TOGETHER_MODEL,
             max_tokens = body.max_tokens,
             message_count = body.messages.len(),
             body = %serde_json::to_string(&body).unwrap_or_default(),
@@ -173,7 +172,7 @@ impl AiClient for OpenAiClient {
 
         let response = self
             .http
-            .post(OPENAI_API_URL)
+            .post(TOGETHER_API_URL)
             .header("authorization", format!("Bearer {}", self.api_key))
             .header("content-type", "application/json")
             .json(&body)
@@ -191,7 +190,7 @@ impl AiClient for OpenAiClient {
             .map_err(|e| AiClientError::NetworkError(e.into()))?;
 
         tracing::debug!(
-            provider = "openai",
+            provider = "together",
             status,
             body = %response_text,
             "Received summary response from LLM"
@@ -204,18 +203,19 @@ impl AiClient for OpenAiClient {
             });
         }
 
-        let openai_resp: OpenAiResponse = serde_json::from_str(&response_text).map_err(|e| {
-            AiClientError::ParseError(format!(
-                "Failed to deserialize OpenAI summary response: {e}"
-            ))
-        })?;
+        let together_resp: TogetherResponse =
+            serde_json::from_str(&response_text).map_err(|e| {
+                AiClientError::ParseError(format!(
+                    "Failed to deserialize Together summary response: {e}"
+                ))
+            })?;
 
-        let text = openai_resp
+        let text = together_resp
             .choices
             .first()
             .and_then(|c| c.message.content.as_deref())
             .ok_or_else(|| {
-                AiClientError::ParseError("No content in OpenAI summary response".into())
+                AiClientError::ParseError("No content in Together summary response".into())
             })?;
 
         Ok(text.trim().to_string())

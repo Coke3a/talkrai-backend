@@ -30,6 +30,7 @@ pub struct AiConfig {
     pub claude_api_key: String,
     pub openai_api_key: String,
     pub venice_api_key: String,
+    pub together_api_key: String,
     pub default_provider: String,
 }
 

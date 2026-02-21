@@ -3,6 +3,7 @@ use base64::Engine;
 use hmac::{Hmac, Mac};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use sha2::Sha256;
 use uuid::Uuid;
 
@@ -26,7 +27,7 @@ const RETRY_DELAYS_MS: &[u64] = &[500, 1500];
 #[derive(Serialize)]
 struct PushMessageRequest {
     to: String,
-    messages: Vec<TextMessageObject>,
+    messages: Vec<serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -49,21 +50,55 @@ enum ReplyMessageObject {
     },
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TextMessageObject {
-    #[serde(rename = "type")]
-    msg_type: &'static str,
-    text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    sender: Option<SenderOverride>,
+/// Sanitize a display name for LINE's `sender.name` field.
+///
+/// LINE rejects control characters, zero-width characters, and names longer
+/// than 20 characters. This strips those out while preserving normal text
+/// (including Thai, Japanese, emoji, etc.).
+fn sanitize_sender_name(raw: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| {
+            // Remove control characters (C0, DEL, C1)
+            if c.is_control() {
+                return false;
+            }
+            // Remove zero-width / invisible formatting characters
+            !matches!(*c,
+                '\u{200B}'..='\u{200F}' // zero-width space, ZWNJ, ZWJ, LRM, RLM
+                | '\u{2028}'..='\u{2029}' // line/paragraph separator
+                | '\u{202A}'..='\u{202E}' // bidi overrides
+                | '\u{2060}'..='\u{2064}' // word joiner, invisible times, etc.
+                | '\u{2066}'..='\u{2069}' // bidi isolates
+                | '\u{FEFF}' // BOM / zero-width no-break space
+                | '\u{FFF9}'..='\u{FFFB}' // interlinear annotations
+            )
+        })
+        .collect();
+
+    let trimmed = cleaned.trim();
+
+    // Truncate to 20 characters (LINE's limit)
+    if trimmed.chars().count() > 20 {
+        trimmed
+            .chars()
+            .take(20)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SenderOverride {
-    name: String,
-    icon_url: String,
+/// Build the `sender` JSON object, omitting `name` when empty.
+fn build_sender_object(sender_name: &str, sender_icon_url: &str) -> Value {
+    let name = sanitize_sender_name(sender_name);
+    if name.is_empty() {
+        json!({ "iconUrl": sender_icon_url })
+    } else {
+        json!({ "name": name, "iconUrl": sender_icon_url })
+    }
 }
 
 #[derive(Serialize)]
@@ -131,13 +166,33 @@ impl LineClient for LineClientImpl {
             to: line_user_id.to_string(),
             messages: messages
                 .into_iter()
-                .map(|m| TextMessageObject {
-                    msg_type: "text",
-                    text: m.text,
-                    sender: Some(SenderOverride {
-                        name: m.sender_name,
-                        icon_url: m.sender_icon_url,
-                    }),
+                .map(|m| match m {
+                    LineMessage::Text {
+                        text,
+                        sender_name,
+                        sender_icon_url,
+                    } => {
+                        let sender = build_sender_object(&sender_name, &sender_icon_url);
+                        json!({
+                            "type": "text",
+                            "text": text,
+                            "sender": sender
+                        })
+                    }
+                    LineMessage::Flex {
+                        alt_text,
+                        contents,
+                        sender_name,
+                        sender_icon_url,
+                    } => {
+                        let sender = build_sender_object(&sender_name, &sender_icon_url);
+                        json!({
+                            "type": "flex",
+                            "altText": alt_text,
+                            "contents": contents,
+                            "sender": sender
+                        })
+                    }
                 })
                 .collect(),
         };

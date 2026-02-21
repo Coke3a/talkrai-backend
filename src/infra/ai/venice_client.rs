@@ -86,6 +86,15 @@ impl AiClient for VeniceClient {
             messages,
         };
 
+        tracing::debug!(
+            provider = "venice",
+            model = VENICE_MODEL,
+            max_tokens = body.max_tokens,
+            message_count = body.messages.len(),
+            body = %serde_json::to_string(&body).unwrap_or_default(),
+            "Sending roleplay request to LLM"
+        );
+
         let response = self
             .http
             .post(VENICE_API_URL)
@@ -100,15 +109,26 @@ impl AiClient for VeniceClient {
         if status == 429 {
             return Err(AiClientError::RateLimited);
         }
-        if !response.status().is_success() {
-            let message = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Failed to read error body".into());
-            return Err(AiClientError::ApiError { status, message });
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| AiClientError::NetworkError(e.into()))?;
+
+        tracing::debug!(
+            provider = "venice",
+            status,
+            body = %response_text,
+            "Received roleplay response from LLM"
+        );
+
+        if status >= 400 {
+            return Err(AiClientError::ApiError {
+                status,
+                message: response_text,
+            });
         }
 
-        let venice_resp: VeniceResponse = response.json().await.map_err(|e| {
+        let venice_resp: VeniceResponse = serde_json::from_str(&response_text).map_err(|e| {
             AiClientError::ParseError(format!("Failed to deserialize Venice response: {e}"))
         })?;
 
@@ -142,6 +162,15 @@ impl AiClient for VeniceClient {
             messages,
         };
 
+        tracing::debug!(
+            provider = "venice",
+            model = VENICE_MODEL,
+            max_tokens = body.max_tokens,
+            message_count = body.messages.len(),
+            body = %serde_json::to_string(&body).unwrap_or_default(),
+            "Sending summary request to LLM"
+        );
+
         let response = self
             .http
             .post(VENICE_API_URL)
@@ -156,15 +185,26 @@ impl AiClient for VeniceClient {
         if status == 429 {
             return Err(AiClientError::RateLimited);
         }
-        if !response.status().is_success() {
-            let message = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Failed to read error body".into());
-            return Err(AiClientError::ApiError { status, message });
+        let response_text = response
+            .text()
+            .await
+            .map_err(|e| AiClientError::NetworkError(e.into()))?;
+
+        tracing::debug!(
+            provider = "venice",
+            status,
+            body = %response_text,
+            "Received summary response from LLM"
+        );
+
+        if status >= 400 {
+            return Err(AiClientError::ApiError {
+                status,
+                message: response_text,
+            });
         }
 
-        let venice_resp: VeniceResponse = response.json().await.map_err(|e| {
+        let venice_resp: VeniceResponse = serde_json::from_str(&response_text).map_err(|e| {
             AiClientError::ParseError(format!(
                 "Failed to deserialize Venice summary response: {e}"
             ))

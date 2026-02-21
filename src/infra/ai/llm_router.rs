@@ -14,6 +14,7 @@ pub struct LlmRouter {
     claude: Arc<dyn AiClient>,
     openai: Arc<dyn AiClient>,
     venice: Arc<dyn AiClient>,
+    together: Arc<dyn AiClient>,
     config_repo: Arc<dyn AppConfigRepository>,
     env_default: String,
 }
@@ -23,6 +24,7 @@ impl LlmRouter {
         claude: Arc<dyn AiClient>,
         openai: Arc<dyn AiClient>,
         venice: Arc<dyn AiClient>,
+        together: Arc<dyn AiClient>,
         config_repo: Arc<dyn AppConfigRepository>,
         env_default: String,
     ) -> Self {
@@ -30,6 +32,7 @@ impl LlmRouter {
             claude,
             openai,
             venice,
+            together,
             config_repo,
             env_default,
         }
@@ -63,6 +66,7 @@ impl LlmRouter {
             "claude" => &self.claude,
             "openai" => &self.openai,
             "venice" => &self.venice,
+            "together" => &self.together,
             unknown => {
                 tracing::warn!(
                     provider = unknown,
@@ -81,14 +85,14 @@ impl AiClient for LlmRouter {
         request: AiRoleplayRequest,
     ) -> Result<AiRoleplayResponse, AiClientError> {
         let provider = self.resolve_provider().await;
-        tracing::info!(provider = %provider, "Routing LLM request");
+        tracing::debug!(provider = %provider, "Routing LLM request");
         let client = self.get_client(&provider);
         client.generate_roleplay_response(request).await
     }
 
     async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError> {
         let provider = self.resolve_provider().await;
-        tracing::info!(provider = %provider, "Routing summary request");
+        tracing::debug!(provider = %provider, "Routing summary request");
         let client = self.get_client(&provider);
         client.generate_summary(request).await
     }

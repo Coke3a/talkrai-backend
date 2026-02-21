@@ -239,6 +239,7 @@ struct Infrastructure {
 fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infrastructure {
     use crate::infra::ai::claude_client::ClaudeClient;
     use crate::infra::ai::openai_client::OpenAiClient;
+    use crate::infra::ai::together_client::TogetherClient;
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
@@ -267,11 +268,14 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     let claude: Arc<dyn AiClient> = Arc::new(ClaudeClient::new(config.ai.claude_api_key.clone()));
     let openai: Arc<dyn AiClient> = Arc::new(OpenAiClient::new(config.ai.openai_api_key.clone()));
     let venice: Arc<dyn AiClient> = Arc::new(VeniceClient::new(config.ai.venice_api_key.clone()));
+    let together: Arc<dyn AiClient> =
+        Arc::new(TogetherClient::new(config.ai.together_api_key.clone()));
 
     let ai_client: Arc<dyn AiClient> = Arc::new(LlmRouter::new(
         claude,
         openai,
         venice,
+        together,
         Arc::clone(&config_repo),
         config.ai.default_provider.clone(),
     ));

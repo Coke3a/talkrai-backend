@@ -37,6 +37,8 @@ pub fn load() -> Result<DotEnvyConfig> {
         claude_api_key: std::env::var("CLAUDE_API_KEY").context("CLAUDE_API_KEY is required")?,
         openai_api_key: std::env::var("OPENAI_API_KEY").context("OPENAI_API_KEY is required")?,
         venice_api_key: std::env::var("VENICE_API_KEY").context("VENICE_API_KEY is required")?,
+        together_api_key: std::env::var("TOGETHER_API_KEY")
+            .context("TOGETHER_API_KEY is required")?,
         default_provider: env_or("DEFAULT_LLM_PROVIDER", "claude"),
     };
 
