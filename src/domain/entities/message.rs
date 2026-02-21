@@ -1,13 +1,13 @@
 use chrono::{DateTime, Utc};
 
-use crate::domain::value_objects::{MessageId, MessageRole, MessageType, SessionId};
+use crate::domain::value_objects::{MessageId, MessageRole, SessionId};
 
 pub struct Message {
     id: MessageId,
     session_id: SessionId,
     role: MessageRole,
-    message_type: MessageType,
     content: String,
+    mood: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -15,15 +15,15 @@ impl Message {
     pub fn new(
         session_id: SessionId,
         role: MessageRole,
-        message_type: MessageType,
         content: String,
+        mood: Option<String>,
     ) -> Self {
         Self {
             id: MessageId::new(),
             session_id,
             role,
-            message_type,
             content,
+            mood,
             created_at: Utc::now(),
         }
     }
@@ -32,16 +32,16 @@ impl Message {
         id: MessageId,
         session_id: SessionId,
         role: MessageRole,
-        message_type: MessageType,
         content: String,
+        mood: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
         Self {
             id,
             session_id,
             role,
-            message_type,
             content,
+            mood,
             created_at,
         }
     }
@@ -58,8 +58,8 @@ impl Message {
         &self.role
     }
 
-    pub fn message_type(&self) -> &MessageType {
-        &self.message_type
+    pub fn mood(&self) -> Option<&str> {
+        self.mood.as_deref()
     }
 
     pub fn content(&self) -> &str {

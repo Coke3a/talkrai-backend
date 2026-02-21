@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use crate::domain::entities::Message;
 use crate::domain::repositories::{MessageRepository, RepoError};
-use crate::domain::value_objects::{MessageId, MessageRole, MessageType, SessionId};
+use crate::domain::value_objects::{MessageId, MessageRole, SessionId};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::messages;
 
@@ -22,8 +22,8 @@ struct MessageRow {
     id: Uuid,
     session_id: Uuid,
     role: String,
-    message_type: String,
     content: String,
+    mood: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -33,8 +33,8 @@ impl MessageRow {
             MessageId::from_uuid(self.id),
             SessionId::from_uuid(self.session_id),
             MessageRole::from_str(&self.role).expect("invalid message_role in DB"),
-            MessageType::from_str(&self.message_type).expect("invalid message_type in DB"),
             self.content,
+            self.mood,
             self.created_at,
         )
     }
@@ -46,8 +46,8 @@ struct NewMessageRow<'a> {
     id: &'a Uuid,
     session_id: &'a Uuid,
     role: &'a str,
-    message_type: &'a str,
     content: &'a str,
+    mood: Option<&'a str>,
     created_at: DateTime<Utc>,
 }
 
@@ -57,8 +57,8 @@ impl<'a> NewMessageRow<'a> {
             id: entity.id().as_uuid(),
             session_id: entity.session_id().as_uuid(),
             role: entity.role().as_str(),
-            message_type: entity.message_type().as_str(),
             content: entity.content(),
+            mood: entity.mood(),
             created_at: *entity.created_at(),
         }
     }

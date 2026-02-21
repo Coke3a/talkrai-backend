@@ -2,10 +2,9 @@ CREATE TABLE messages (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     session_id      UUID NOT NULL REFERENCES roleplay_sessions(id) ON DELETE CASCADE,
     role            VARCHAR NOT NULL
-                    CHECK (role IN ('user', 'narrator', 'character')),
-    message_type    VARCHAR NOT NULL
-                    CHECK (message_type IN ('dialogue', 'action', 'mixed', 'narration', 'system')),
+                    CHECK (role IN ('user', 'character')),
     content         TEXT NOT NULL,
+    mood            VARCHAR,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

@@ -3,6 +3,8 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::{json, Value};
 
+use crate::domain::services::ai_client::{BlockType, ResponseBlock};
+
 static ACTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*([^*]+)\*").unwrap());
 
 /// Map a color_tone name to (accent, gradient_start, gradient_end).
@@ -215,6 +217,95 @@ pub fn build_roleplay_bubble(
             "wrap": true,
             "margin": "sm"
         }));
+    }
+
+    json!({
+        "type": "bubble",
+        "size": "mega",
+        "styles": {
+            "body": {
+                "backgroundColor": "#00000000"
+            }
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "background": {
+                "type": "linearGradient",
+                "angle": "180deg",
+                "startColor": gradient_start,
+                "endColor": gradient_end
+            },
+            "paddingAll": "20px",
+            "contents": contents
+        }
+    })
+}
+
+/// Build a novel-flow Flex Bubble from response blocks.
+///
+/// narration blocks: gray text (xs), dialogue blocks: white text (sm, bold).
+/// Header always shows location + time.
+pub fn build_roleplay_blocks_bubble(
+    blocks: &[ResponseBlock],
+    location: &str,
+    time_of_day: &str,
+    color_tone: &str,
+) -> Value {
+    let (accent, gradient_start, gradient_end) = color_tone_to_colors(color_tone);
+    let time_display = time_period_display(time_of_day);
+
+    let mut contents: Vec<Value> = Vec::new();
+
+    // Header: location + time
+    contents.push(json!({
+        "type": "box",
+        "layout": "horizontal",
+        "justifyContent": "space-between",
+        "contents": [
+            {
+                "type": "text",
+                "text": format!("📍 {location}"),
+                "color": accent,
+                "size": "xs",
+                "weight": "bold",
+                "wrap": true
+            },
+            {
+                "type": "text",
+                "text": time_display,
+                "color": "#888888",
+                "size": "xxs",
+                "flex": 0
+            }
+        ]
+    }));
+
+    // Render each block
+    for block in blocks {
+        match block.block_type {
+            BlockType::Narration => {
+                contents.push(json!({
+                    "type": "text",
+                    "text": block.text,
+                    "color": "#A0A0A0",
+                    "size": "xs",
+                    "wrap": true,
+                    "margin": "md"
+                }));
+            }
+            BlockType::Dialogue => {
+                contents.push(json!({
+                    "type": "text",
+                    "text": block.text,
+                    "color": "#FFFFFF",
+                    "size": "sm",
+                    "weight": "bold",
+                    "wrap": true,
+                    "margin": "md"
+                }));
+            }
+        }
     }
 
     json!({
@@ -473,5 +564,101 @@ mod tests {
         let result = truncate_alt_text(&long);
         assert!(result.chars().count() <= 400);
         assert!(result.ends_with("..."));
+    }
+
+    // --- build_roleplay_blocks_bubble tests ---
+
+    #[test]
+    fn blocks_bubble_basic() {
+        let blocks = vec![
+            ResponseBlock {
+                block_type: BlockType::Narration,
+                text: "ลมพัดเบาๆ".to_string(),
+            },
+            ResponseBlock {
+                block_type: BlockType::Dialogue,
+                text: "\"สวัสดีค่า~\"".to_string(),
+            },
+        ];
+
+        let bubble = build_roleplay_blocks_bubble(&blocks, "ร้านกาแฟ", "เช้าตรู่", "warm_golden");
+
+        assert_eq!(bubble["type"], "bubble");
+        assert_eq!(bubble["size"], "mega");
+
+        let contents = bubble["body"]["contents"].as_array().unwrap();
+        // header + 2 blocks = 3
+        assert_eq!(contents.len(), 3);
+
+        // Header
+        assert_eq!(contents[0]["contents"][0]["text"], "📍 ร้านกาแฟ");
+        assert_eq!(contents[0]["contents"][1]["text"], "🌅 เช้า");
+
+        // Narration block
+        assert_eq!(contents[1]["text"], "ลมพัดเบาๆ");
+        assert_eq!(contents[1]["color"], "#A0A0A0");
+        assert_eq!(contents[1]["size"], "xs");
+        assert_eq!(contents[1]["margin"], "md");
+
+        // Dialogue block
+        assert_eq!(contents[2]["text"], "\"สวัสดีค่า~\"");
+        assert_eq!(contents[2]["color"], "#FFFFFF");
+        assert_eq!(contents[2]["size"], "sm");
+        assert_eq!(contents[2]["weight"], "bold");
+        assert_eq!(contents[2]["margin"], "md");
+    }
+
+    #[test]
+    fn blocks_bubble_multiple_blocks() {
+        let blocks = vec![
+            ResponseBlock {
+                block_type: BlockType::Narration,
+                text: "N1".to_string(),
+            },
+            ResponseBlock {
+                block_type: BlockType::Dialogue,
+                text: "D1".to_string(),
+            },
+            ResponseBlock {
+                block_type: BlockType::Narration,
+                text: "N2".to_string(),
+            },
+            ResponseBlock {
+                block_type: BlockType::Dialogue,
+                text: "D2".to_string(),
+            },
+        ];
+
+        let bubble = build_roleplay_blocks_bubble(&blocks, "สวน", "เย็น", "cool_blue");
+
+        let contents = bubble["body"]["contents"].as_array().unwrap();
+        // header + 4 blocks = 5
+        assert_eq!(contents.len(), 5);
+
+        assert_eq!(contents[1]["color"], "#A0A0A0"); // narration
+        assert_eq!(contents[2]["color"], "#FFFFFF"); // dialogue
+        assert_eq!(contents[3]["color"], "#A0A0A0"); // narration
+        assert_eq!(contents[4]["color"], "#FFFFFF"); // dialogue
+    }
+
+    #[test]
+    fn blocks_bubble_uses_gradient_background() {
+        let blocks = vec![
+            ResponseBlock {
+                block_type: BlockType::Narration,
+                text: "N".to_string(),
+            },
+            ResponseBlock {
+                block_type: BlockType::Dialogue,
+                text: "D".to_string(),
+            },
+        ];
+
+        let bubble = build_roleplay_blocks_bubble(&blocks, "ร้าน", "ค่ำ", "deep_purple");
+
+        let bg = &bubble["body"]["background"];
+        assert_eq!(bg["type"], "linearGradient");
+        assert_eq!(bg["startColor"], "#0f0a1a");
+        assert_eq!(bg["endColor"], "#14101f");
     }
 }

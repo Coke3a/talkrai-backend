@@ -12,9 +12,7 @@ use crate::domain::services::ai_client::{
     AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
-use crate::domain::value_objects::{
-    CharacterMood, JobId, MessageRole, MessageType, RelationshipThresholds,
-};
+use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, RelationshipThresholds};
 use crate::infra::line::roleplay_flex;
 use crate::usecases::UsecaseError;
 
@@ -122,11 +120,45 @@ pub fn build_system_prompt(
     prompt.push_str(
         r#"
 
-Reply with ONLY a JSON object. Both narrator_text and character_text are REQUIRED and must not be empty.
-{"narrator_text":"📍 loc • 🕒 time\n...","character_text":"...","mood":"neutral|happy|sad|excited|angry|shy|playful|serious|worried","scene_update":null}"#,
+## Writing Style
+- เขียนแบบนิยายไทย สลับบรรยายกับบทพูดได้อิสระตามธรรมชาติ
+- narration: ร้อยแก้วบรรยายฉาก การกระทำ อารมณ์ ใช้ sensory details (แสง สี เสียง กลิ่น สัมผัส)
+- dialogue: บทพูดตัวละครในเครื่องหมายคำพูด ("...") สะท้อน speaking_style
+- ใช้หลัก Show Don't Tell — บรรยายผ่านร่างกาย (มือสั่น หายใจหนัก หัวใจเต้น) แทนบอกตรงๆ
+- ใช้อุปมาอุปไมย ("ราวกับ..." "ดุจ...")
+- narration block: 2-6 ประโยค, dialogue block: 1-3 ประโยค
+- จบด้วย dialogue หรือ narration ที่ค้างไว้ ให้ user อยากตอบ
+
+## ความยาว
+- ฉากเข้มข้น/ดราม่า: 4-8 blocks, 200-400 คำ
+- ฉากโรแมนซ์: 3-6 blocks, 150-300 คำ
+- ฉากสบายๆ: 2-4 blocks, 80-150 คำ
+
+## Response Format
+Reply with ONLY a JSON object using blocks array:
+- min 2 blocks, min 1 narration
+- no 3+ consecutive dialogue blocks
+- mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
+
+{"blocks":[{"type":"narration","text":"..."},{"type":"dialogue","text":"\"...\""}],"mood":"...","scene_update":null}
+
+## Example
+User: สวัสดี มีขนมปังอะไรบ้าง
+{"blocks":[{"type":"narration","text":"เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น"},{"type":"dialogue","text":"\"สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ\""},{"type":"narration","text":"เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ"},{"type":"dialogue","text":"\"ลองดูไหมคะ ครัวซองต์รอบนี้กรอบมากเลย~\""}],"mood":"happy","scene_update":null}"#,
     );
 
     prompt
+}
+
+/// Wrap character message content for AI conversation format.
+/// JSON blocks array → {"blocks": [...]}
+/// Legacy plain text → {"blocks": [{"type":"dialogue","text":"..."}]}
+fn wrap_character_content(raw: &str) -> String {
+    if raw.trim_start().starts_with('[') {
+        format!(r#"{{"blocks":{}}}"#, raw)
+    } else {
+        json!({"blocks": [{"type": "dialogue", "text": raw}]}).to_string()
+    }
 }
 
 pub fn build_ai_messages(
@@ -134,60 +166,24 @@ pub fn build_ai_messages(
     current_user_message: &str,
 ) -> Vec<AiMessage> {
     let mut ai_messages = Vec::new();
-    let mut i = 0;
 
-    while i < recent_messages.len() {
-        match recent_messages[i].role() {
+    for msg in recent_messages {
+        match msg.role() {
             MessageRole::User => {
                 ai_messages.push(AiMessage {
                     role: "user".to_string(),
-                    content: recent_messages[i].content().to_string(),
+                    content: msg.content().to_string(),
                 });
-                i += 1;
-            }
-            MessageRole::Narrator => {
-                let narrator_text = recent_messages[i].content().to_string();
-                let character_text = if i + 1 < recent_messages.len()
-                    && *recent_messages[i + 1].role() == MessageRole::Character
-                {
-                    i += 1;
-                    recent_messages[i].content().to_string()
-                } else {
-                    String::new()
-                };
-
-                // Skip empty assistant messages to avoid noise and consecutive assistant issues
-                if !narrator_text.is_empty() || !character_text.is_empty() {
-                    ai_messages.push(AiMessage {
-                        role: "assistant".to_string(),
-                        content: json!({
-                            "narrator_text": narrator_text,
-                            "character_text": character_text
-                        })
-                        .to_string(),
-                    });
-                }
-                i += 1;
             }
             MessageRole::Character => {
-                // Orphan character message (shouldn't happen normally)
-                let character_text = recent_messages[i].content().to_string();
-                if !character_text.is_empty() {
-                    ai_messages.push(AiMessage {
-                        role: "assistant".to_string(),
-                        content: json!({
-                            "narrator_text": "",
-                            "character_text": character_text
-                        })
-                        .to_string(),
-                    });
-                }
-                i += 1;
+                ai_messages.push(AiMessage {
+                    role: "assistant".to_string(),
+                    content: wrap_character_content(msg.content()),
+                });
             }
         }
     }
 
-    // Append current user message
     ai_messages.push(AiMessage {
         role: "user".to_string(),
         content: current_user_message.to_string(),
@@ -213,10 +209,6 @@ pub struct ProcessRoleplayMessageUseCase {
 }
 
 struct ResolvedConfig {
-    #[allow(dead_code)]
-    narrator_display_name: String,
-    #[allow(dead_code)]
-    narrator_avatar_url: String,
     ai_max_tokens: u32,
     summarize_interval: Option<u32>,
     relationship_thresholds: RelationshipThresholds,
@@ -254,8 +246,6 @@ impl ProcessRoleplayMessageUseCase {
 
     async fn resolve_config(&self) -> Result<ResolvedConfig, UsecaseError> {
         let keys = &[
-            "narrator_display_name",
-            "narrator_avatar_url",
             "ai_max_tokens",
             "summarize_interval",
             "relationship_threshold_acquaintance",
@@ -323,12 +313,6 @@ impl ProcessRoleplayMessageUseCase {
         })?;
 
         Ok(ResolvedConfig {
-            narrator_display_name: map.get("narrator_display_name").cloned().ok_or_else(|| {
-                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_display_name"))
-            })?,
-            narrator_avatar_url: map.get("narrator_avatar_url").cloned().ok_or_else(|| {
-                UsecaseError::Infra(anyhow::anyhow!("Missing app_config: narrator_avatar_url"))
-            })?,
             ai_max_tokens: map
                 .get("ai_max_tokens")
                 .ok_or_else(|| {
@@ -417,17 +401,14 @@ impl ProcessRoleplayMessageUseCase {
             return Err(UsecaseError::InsufficientCredits);
         }
 
-        // 4. Classify user input
-        let user_message_type = MessageType::classify_user_input(job.user_message());
-
-        // 5. Resolve config from DB
+        // 4. Resolve config from DB
         let cfg = self.resolve_config().await?;
 
-        // 6. Build prompt (call free functions)
+        // 5. Build prompt (call free functions)
         let system_prompt = build_system_prompt(&character, &scene, &session);
         let ai_messages = build_ai_messages(&recent_messages, job.user_message());
 
-        // 7. Call AI
+        // 6. Call AI
         let ai_response = self
             .ai_client
             .generate_roleplay_response(AiRoleplayRequest {
@@ -437,42 +418,31 @@ impl ProcessRoleplayMessageUseCase {
             })
             .await?;
 
-        // 8. Save messages: user + non-empty narrator/character
+        // 7. Save messages: user + character (blocks JSON + mood)
         let user_msg = Message::new(
             session.id().clone(),
             MessageRole::User,
-            user_message_type,
             job.user_message().to_string(),
+            None,
         );
-        let mut messages_to_save = vec![user_msg];
+        let character_msg = Message::new(
+            session.id().clone(),
+            MessageRole::Character,
+            ai_response.blocks_json(),
+            ai_response.mood.clone(),
+        );
+        self.message_repo
+            .create_many(&[user_msg, character_msg])
+            .await?;
 
-        if !ai_response.narrator_text.is_empty() {
-            messages_to_save.push(Message::new(
-                session.id().clone(),
-                MessageRole::Narrator,
-                MessageType::Narration,
-                ai_response.narrator_text.clone(),
-            ));
-        }
-        if !ai_response.character_text.is_empty() {
-            messages_to_save.push(Message::new(
-                session.id().clone(),
-                MessageRole::Character,
-                MessageType::Dialogue,
-                ai_response.character_text.clone(),
-            ));
-        }
-
-        self.message_repo.create_many(&messages_to_save).await?;
-
-        // 9. Deduct credit
+        // 8. Deduct credit
         let mut balance = credit_balance;
         let transaction = balance.deduct(1, Some(*job.id().as_uuid()))?;
         self.credit_repo
             .deduct_and_log(session.user_id(), 1, &transaction)
             .await?;
 
-        // 10. Update session
+        // 9. Update session
         let mut session = session;
         if let Some(mood_str) = &ai_response.mood {
             if let Ok(mood) = CharacterMood::from_str(mood_str) {
@@ -497,48 +467,36 @@ impl ProcessRoleplayMessageUseCase {
             );
         }
 
-        // 11. Push LINE Flex message (combined bubble)
-        let narrator_trimmed = ai_response.narrator_text.trim();
-        let character_trimmed = ai_response.character_text.trim();
-
-        if !narrator_trimmed.is_empty() || !character_trimmed.is_empty() {
+        // 10. Push LINE message: single Flex bubble with character sender
+        if !ai_response.blocks.is_empty() {
             let location = session
                 .current_location()
                 .unwrap_or_else(|| scene.location());
             let time_of_day = session.scene_time().unwrap_or_else(|| scene.time_of_day());
             let color_tone = extract_color_tone(scene.atmosphere());
 
-            let bubble = roleplay_flex::build_roleplay_bubble(
-                narrator_trimmed,
-                character_trimmed,
-                character.name().as_str(),
-                character.avatar_url(),
+            let bubble = roleplay_flex::build_roleplay_blocks_bubble(
+                &ai_response.blocks,
                 location,
                 time_of_day,
                 &color_tone,
             );
 
-            // altText: prefer character for notification preview
-            let alt_source = if !character_trimmed.is_empty() {
-                character_trimmed
-            } else {
-                narrator_trimmed
-            };
+            let alt_source = &ai_response.blocks[0].text;
+
+            let line_messages = vec![LineMessage::Flex {
+                alt_text: roleplay_flex::truncate_alt_text(alt_source),
+                contents: bubble,
+                sender_name: character.name().as_str().to_string(),
+                sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+            }];
 
             self.line_client
-                .push_messages(
-                    job.line_user_id(),
-                    vec![LineMessage::Flex {
-                        alt_text: roleplay_flex::truncate_alt_text(alt_source),
-                        contents: bubble,
-                        sender_name: String::new(),
-                        sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
-                    }],
-                )
+                .push_messages(job.line_user_id(), line_messages)
                 .await?;
         }
 
-        // 12. Mark job completed
+        // 11. Mark job completed
         job.complete()?;
         self.job_repo.update(job).await?;
 
@@ -548,7 +506,7 @@ impl ProcessRoleplayMessageUseCase {
             "Roleplay message processed"
         );
 
-        // 13. Background summarization (best-effort, after user gets response)
+        // 12. Background summarization (best-effort, after user gets response)
         if let Some(interval) = cfg.summarize_interval.filter(|&v| v > 0) {
             self.maybe_summarize(&session, interval).await;
         }
@@ -598,9 +556,12 @@ impl ProcessRoleplayMessageUseCase {
             .map(|m| AiMessage {
                 role: match m.role() {
                     MessageRole::User => "user".to_string(),
-                    MessageRole::Narrator | MessageRole::Character => "assistant".to_string(),
+                    MessageRole::Character => "assistant".to_string(),
                 },
-                content: m.content().to_string(),
+                content: match m.role() {
+                    MessageRole::User => m.content().to_string(),
+                    MessageRole::Character => wrap_character_content(m.content()),
+                },
             })
             .collect();
 
@@ -786,8 +747,8 @@ mod tests {
             MessageId::new(),
             SessionId::new(),
             MessageRole::User,
-            MessageType::Dialogue,
             "สวัสดี".to_string(),
+            None,
             chrono::Utc::now(),
         )];
 
@@ -801,64 +762,40 @@ mod tests {
     }
 
     #[test]
-    fn build_ai_messages_combines_narrator_and_character() {
+    fn build_ai_messages_character_json_blocks() {
         let session_id = SessionId::new();
-        let messages = vec![
-            Message::from_existing(
-                MessageId::new(),
-                session_id.clone(),
-                MessageRole::Narrator,
-                MessageType::Dialogue,
-                "📍 ร้านกาแฟ • 🕒 บ่าย".to_string(),
-                chrono::Utc::now(),
-            ),
-            Message::from_existing(
-                MessageId::new(),
-                session_id,
-                MessageRole::Character,
-                MessageType::Dialogue,
-                "สวัสดีค่า~".to_string(),
-                chrono::Utc::now(),
-            ),
-        ];
-
-        let result = build_ai_messages(&messages, "ว่าไง");
-
-        assert_eq!(result.len(), 2); // 1 combined assistant + 1 current user
-        assert_eq!(result[0].role, "assistant");
-
-        let parsed: serde_json::Value = serde_json::from_str(&result[0].content).unwrap();
-        assert_eq!(parsed["narrator_text"], "📍 ร้านกาแฟ • 🕒 บ่าย");
-        assert_eq!(parsed["character_text"], "สวัสดีค่า~");
-    }
-
-    #[test]
-    fn build_ai_messages_handles_orphan_narrator() {
+        let blocks_json = r#"[{"type":"narration","text":"📍 ร้านกาแฟ • 🕒 บ่าย"},{"type":"dialogue","text":"สวัสดีค่า~"}]"#;
         let messages = vec![Message::from_existing(
             MessageId::new(),
-            SessionId::new(),
-            MessageRole::Narrator,
-            MessageType::Dialogue,
-            "📍 ร้านกาแฟ".to_string(),
+            session_id,
+            MessageRole::Character,
+            blocks_json.to_string(),
+            Some("happy".to_string()),
             chrono::Utc::now(),
         )];
 
-        let result = build_ai_messages(&messages, "test");
+        let result = build_ai_messages(&messages, "ว่าไง");
 
+        assert_eq!(result.len(), 2); // 1 assistant + 1 current user
         assert_eq!(result[0].role, "assistant");
+
         let parsed: serde_json::Value = serde_json::from_str(&result[0].content).unwrap();
-        assert_eq!(parsed["narrator_text"], "📍 ร้านกาแฟ");
-        assert_eq!(parsed["character_text"], "");
+        let blocks = parsed["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0]["type"], "narration");
+        assert_eq!(blocks[0]["text"], "📍 ร้านกาแฟ • 🕒 บ่าย");
+        assert_eq!(blocks[1]["type"], "dialogue");
+        assert_eq!(blocks[1]["text"], "สวัสดีค่า~");
     }
 
     #[test]
-    fn build_ai_messages_handles_orphan_character() {
+    fn build_ai_messages_legacy_plain_text_character() {
         let messages = vec![Message::from_existing(
             MessageId::new(),
             SessionId::new(),
             MessageRole::Character,
-            MessageType::Dialogue,
             "สวัสดีค่า~".to_string(),
+            None,
             chrono::Utc::now(),
         )];
 
@@ -866,45 +803,40 @@ mod tests {
 
         assert_eq!(result[0].role, "assistant");
         let parsed: serde_json::Value = serde_json::from_str(&result[0].content).unwrap();
-        assert_eq!(parsed["narrator_text"], "");
-        assert_eq!(parsed["character_text"], "สวัสดีค่า~");
+        let blocks = parsed["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0]["type"], "dialogue");
+        assert_eq!(blocks[0]["text"], "สวัสดีค่า~");
     }
 
     #[test]
     fn build_ai_messages_full_conversation_flow() {
         let session_id = SessionId::new();
         let base_time = chrono::Utc::now();
+        let blocks_json = r#"[{"type":"narration","text":"📍 ร้านขนมปัง • 🕒 เช้า"},{"type":"dialogue","text":"สวัสดีค่า~ ยินดีต้อนรับนะคะ"}]"#;
         let messages = vec![
             Message::from_existing(
                 MessageId::new(),
                 session_id.clone(),
                 MessageRole::User,
-                MessageType::Dialogue,
                 "สวัสดี".to_string(),
-                base_time,
-            ),
-            Message::from_existing(
-                MessageId::new(),
-                session_id.clone(),
-                MessageRole::Narrator,
-                MessageType::Dialogue,
-                "📍 ร้านขนมปัง • 🕒 เช้า".to_string(),
+                None,
                 base_time,
             ),
             Message::from_existing(
                 MessageId::new(),
                 session_id.clone(),
                 MessageRole::Character,
-                MessageType::Dialogue,
-                "สวัสดีค่า~ ยินดีต้อนรับนะคะ".to_string(),
+                blocks_json.to_string(),
+                Some("happy".to_string()),
                 base_time,
             ),
             Message::from_existing(
                 MessageId::new(),
                 session_id,
                 MessageRole::User,
-                MessageType::Dialogue,
                 "มีขนมปังอะไรบ้าง".to_string(),
+                None,
                 base_time,
             ),
         ];
@@ -929,10 +861,27 @@ mod tests {
 
         let prompt = build_system_prompt(&character, &scene, &session);
 
-        assert!(prompt.contains("narrator_text"));
-        assert!(prompt.contains("character_text"));
+        assert!(prompt.contains("blocks"));
+        assert!(prompt.contains("narration"));
+        assert!(prompt.contains("dialogue"));
         assert!(prompt.contains("scene_update"));
         assert!(prompt.contains("Reply with ONLY a JSON object"));
+    }
+
+    #[test]
+    fn wrap_character_content_json_array() {
+        let json = r#"[{"type":"narration","text":"hello"}]"#;
+        let result = wrap_character_content(json);
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert!(parsed["blocks"].is_array());
+    }
+
+    #[test]
+    fn wrap_character_content_plain_text() {
+        let result = wrap_character_content("plain text");
+        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(parsed["blocks"][0]["type"], "dialogue");
+        assert_eq!(parsed["blocks"][0]["text"], "plain text");
     }
 
     #[test]

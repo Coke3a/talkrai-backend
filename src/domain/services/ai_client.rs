@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use serde::Serialize;
 
 use super::ai_client_error::AiClientError;
 
@@ -25,11 +26,31 @@ pub struct AiMessage {
     pub content: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockType {
+    Narration,
+    Dialogue,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResponseBlock {
+    #[serde(rename = "type")]
+    pub block_type: BlockType,
+    pub text: String,
+}
+
 pub struct AiRoleplayResponse {
-    pub narrator_text: String,
-    pub character_text: String,
+    pub blocks: Vec<ResponseBlock>,
     pub mood: Option<String>,
     pub scene_update: Option<AiSceneUpdate>,
+}
+
+impl AiRoleplayResponse {
+    /// Serialize blocks to JSON string for storage.
+    pub fn blocks_json(&self) -> String {
+        serde_json::to_string(&self.blocks).unwrap_or_else(|_| "[]".to_string())
+    }
 }
 
 pub struct AiSceneUpdate {

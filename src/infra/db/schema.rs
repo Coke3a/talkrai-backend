@@ -76,8 +76,8 @@ diesel::table! {
         id -> Uuid,
         session_id -> Uuid,
         role -> Varchar,
-        message_type -> Varchar,
         content -> Text,
+        mood -> Nullable<Varchar>,
         created_at -> Timestamptz,
     }
 }
