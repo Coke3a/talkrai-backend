@@ -76,19 +76,23 @@ pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError
     };
 
     // Try parsing full text — blocks first, then legacy
-    if let Some(resp) = try_parse_blocks(json_str) {
+    if let Some(resp) = try_parse(json_str) {
         return Ok(resp);
     }
-    if let Some(resp) = try_parse_legacy(json_str) {
+
+    // Try repairing JSON then parsing
+    let repaired = repair_json(json_str);
+    if let Some(resp) = try_parse(&repaired) {
         return Ok(resp);
     }
 
     // Fallback: extract last JSON object from mixed content
     if let Some(extracted) = extract_last_json_object(json_str) {
-        if let Some(resp) = try_parse_blocks(extracted) {
+        if let Some(resp) = try_parse(extracted) {
             return Ok(resp);
         }
-        if let Some(resp) = try_parse_legacy(extracted) {
+        let repaired_extracted = repair_json(extracted);
+        if let Some(resp) = try_parse(&repaired_extracted) {
             return Ok(resp);
         }
     }
@@ -171,6 +175,72 @@ fn convert_scene_update(su: LlmSceneUpdate) -> AiSceneUpdate {
         time: su.time,
         summary: su.summary,
     }
+}
+
+/// Repair common LLM JSON errors **outside** of string values.
+///
+/// Fixes:
+/// - Stray `(` `)` outside strings → removed
+/// - Trailing commas `,]` `,}` → comma removed
+///
+/// Characters inside JSON string values are never touched.
+fn repair_json(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut in_string = false;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+
+        if in_string {
+            out.push(b);
+            if b == b'"' {
+                // Count preceding backslashes to determine if this quote is escaped
+                let mut backslashes = 0;
+                while backslashes < out.len() - 1 && out[out.len() - 2 - backslashes] == b'\\' {
+                    backslashes += 1;
+                }
+                if backslashes % 2 == 0 {
+                    in_string = false;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        // Outside string
+        match b {
+            b'"' => {
+                in_string = true;
+                out.push(b);
+            }
+            // Remove stray parentheses outside strings
+            b'(' | b')' => { /* skip */ }
+            // Remove trailing commas before ] or }
+            b',' => {
+                // Peek ahead past whitespace to see if next non-ws char is ] or }
+                let mut j = i + 1;
+                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if j < bytes.len() && (bytes[j] == b']' || bytes[j] == b'}') {
+                    // Skip this comma (trailing comma)
+                } else {
+                    out.push(b);
+                }
+            }
+            _ => out.push(b),
+        }
+        i += 1;
+    }
+
+    String::from_utf8(out).expect("repair_json: removed only ASCII bytes from valid UTF-8")
+}
+
+/// Try parsing a JSON string as either blocks or legacy format.
+fn try_parse(json_str: &str) -> Option<AiRoleplayResponse> {
+    try_parse_blocks(json_str).or_else(|| try_parse_legacy(json_str))
 }
 
 /// Find the last top-level `{...}` block in a string by scanning for balanced braces.
@@ -409,4 +479,71 @@ Hope that helps!"#;
         assert_eq!(su.location, Some("park".to_string()));
     }
 
+    // --- JSON repair tests ---
+
+    #[test]
+    fn repair_stray_paren_production_error() {
+        // Exact pattern from production: stray ) between closing " of text value and }
+        let raw = r#"{"blocks":[{"type":"narration","text":"เธอยิ้มให้"},{"type":"dialogue","text":"\"มาช่วยจัดการเรื่องของบัคด้วยนะ\""}],"mood":"playful","scene_update":null}"#;
+        // Insert stray ) between the closing " and the }
+        let broken = raw.replace(r#"\""}]"#, r#"\"")}]"#);
+        assert!(serde_json::from_str::<serde_json::Value>(&broken).is_err());
+        let result = parse_llm_response(&broken).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.mood, Some("playful".to_string()));
+    }
+
+    #[test]
+    fn repair_trailing_comma_before_brace() {
+        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy",}"#;
+        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.mood, Some("happy".to_string()));
+    }
+
+    #[test]
+    fn repair_trailing_comma_before_bracket() {
+        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"},],"mood":"happy","scene_update":null}"#;
+        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[test]
+    fn repair_valid_json_unchanged() {
+        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null}"#;
+        let repaired = repair_json(raw);
+        assert_eq!(repaired, raw);
+    }
+
+    #[test]
+    fn repair_preserves_parens_inside_strings() {
+        let raw = r#"{"blocks":[{"type":"narration","text":"เธอยิ้ม (อย่างอ่อนโยน)"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null}"#;
+        let repaired = repair_json(raw);
+        assert_eq!(repaired, raw);
+        let result = parse_llm_response(raw).unwrap();
+        assert!(result.blocks[0].text.contains("(อย่างอ่อนโยน)"));
+    }
+
+    #[test]
+    fn repair_multiple_stray_chars() {
+        // Multiple stray parens outside strings
+        let raw = r#"({"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null})"#;
+        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[test]
+    fn repair_escaped_backslash_before_close_quote() {
+        // String value ends with literal backslash (\\), followed by stray ) outside
+        // The \\\\ in the raw string becomes \\ in the JSON string literal,
+        // which means the closing " is NOT escaped — repair must correctly
+        // identify the string boundary and remove the outer paren.
+        let raw = r#"{"blocks":[{"type":"narration","text":"hello\\"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null})"#;
+        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.blocks[0].text, "hello\\");
+    }
 }

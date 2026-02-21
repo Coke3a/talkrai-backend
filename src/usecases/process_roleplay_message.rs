@@ -136,15 +136,25 @@ pub fn build_system_prompt(
 
 ## Response Format
 Reply with ONLY a JSON object using blocks array:
-- min 2 blocks, min 1 narration
+- mood is REQUIRED — always include mood in every response
+- min 2 blocks, min 1 narration, start with narration
 - no 3+ consecutive dialogue blocks
+- vary block pattern creatively — DO NOT always use N→D→N→D
+  - N→D→N: จบด้วย narration สร้างบรรยากาศค้าง
+  - N→D→N→D→N: เล่าเรื่องยาว จบด้วย narration ให้จินตนาการ
+  - N→D: สั้นกระชับ ตอบเร็ว
+  - N→D→N→D: สลับปกติ
 - mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
 
-{"blocks":[{"type":"narration","text":"..."},{"type":"dialogue","text":"\"...\""}],"mood":"...","scene_update":null}
+{"blocks":[...],"mood":"<REQUIRED>","scene_update":null}
 
-## Example
+## Examples
+
 User: สวัสดี มีขนมปังอะไรบ้าง
-{"blocks":[{"type":"narration","text":"เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น"},{"type":"dialogue","text":"\"สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ\""},{"type":"narration","text":"เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ"},{"type":"dialogue","text":"\"ลองดูไหมคะ ครัวซองต์รอบนี้กรอบมากเลย~\""}],"mood":"happy","scene_update":null}"#,
+{"blocks":[{"type":"narration","text":"เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น"},{"type":"dialogue","text":"\"สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ\""},{"type":"narration","text":"เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ"}],"mood":"happy","scene_update":null}
+
+User: *นั่งเงียบๆ ไม่พูดอะไร*
+{"blocks":[{"type":"narration","text":"เสียงเก้าอี้ถูกดึงออกดังแผ่วเบา แสงบ่ายทอดเงายาวผ่านกระจก"},{"type":"dialogue","text":"\"น้ำค่ะ... ดื่มก่อนนะคะ\""},{"type":"narration","text":"เธอวางแก้วน้ำลงตรงหน้าอย่างเบามือ รอยยิ้มบางๆ ผุดขึ้นที่มุมปากก่อนหันกลับไปเช็ดเคาน์เตอร์ต่อ"},{"type":"dialogue","text":"\"ถ้าอยากได้อะไร... บอกได้นะคะ\""},{"type":"narration","text":"เสียงเพลงแจ๊สเบาๆ ไหลแทรกเข้ามาแทนที่บทสนทนา กลิ่นกาแฟคั่วลอยอ้อยอิ่งอยู่ในอากาศ"}],"mood":"worried","scene_update":null}"#,
     );
 
     prompt
