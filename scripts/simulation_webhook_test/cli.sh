@@ -108,7 +108,7 @@ print_panel() {
 print_user_info() {
     local user_id="$1" line_id="$2" display_name="$3" terms_at="$4"
     local terms_display
-    if [[ -n "$terms_at" && "$terms_at" != "null" ]]; then
+    if [[ -n "$terms_at" && "$terms_at" != "none" ]]; then
         terms_display="$terms_at"
     else
         terms_display="${YELLOW}Not accepted${RESET}"
@@ -223,7 +223,7 @@ select_user() {
     local rows
     rows=$(db_query "
         SELECT u.id, u.line_user_id, COALESCE(u.display_name, 'unnamed'),
-               COALESCE(u.terms_accepted_at::text, ''), COALESCE(cb.balance::text, '-')
+               COALESCE(u.terms_accepted_at::text, 'none'), COALESCE(cb.balance::text, '-')
         FROM users u
         LEFT JOIN credit_balances cb ON cb.user_id = u.id
         ORDER BY u.created_at DESC
@@ -325,7 +325,7 @@ select_scene() {
 action_accept_terms() {
     select_user || return
 
-    if [[ -n "$SELECTED_TERMS_AT" ]]; then
+    if [[ "$SELECTED_TERMS_AT" != "none" ]]; then
         echo -e "${YELLOW}User already accepted terms at ${SELECTED_TERMS_AT}${RESET}"
         print_user_status "$SELECTED_USER_ID" "$SELECTED_LINE_ID" "$SELECTED_DISPLAY_NAME" "$SELECTED_TERMS_AT"
         return
@@ -350,7 +350,7 @@ action_create_session() {
     local dname="$SELECTED_DISPLAY_NAME"
     local terms_at="$SELECTED_TERMS_AT"
 
-    if [[ -z "$terms_at" ]]; then
+    if [[ "$terms_at" == "none" ]]; then
         echo -e "${RED}User has not accepted terms yet.${RESET}"
         echo -e "${DIM}Use 'Accept Terms' first.${RESET}"
         return
