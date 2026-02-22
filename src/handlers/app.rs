@@ -24,11 +24,14 @@ use crate::domain::repositories::{
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
 use crate::domain::value_objects::JobId;
-use crate::handlers::routers::{health_check, ready_check, webhook};
+use crate::handlers::routers::{health_check, liff_api, ready_check, webhook};
 use crate::infra::db::postgres_connection::PgPool;
+use crate::usecases::accept_terms::AcceptTermsUseCase;
 use crate::usecases::background::{JobPollerUseCase, StaleJobCleanupUseCase};
+use crate::usecases::end_session::EndSessionUseCase;
 use crate::usecases::process_roleplay_message::ProcessRoleplayMessageUseCase;
 use crate::usecases::receive_webhook::ReceiveWebhookUseCase;
+use crate::usecases::start_session::StartSessionUseCase;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -38,6 +41,9 @@ pub struct AppState {
     pub line_client: Arc<dyn LineClient>,
     pub ai_client: Arc<dyn AiClient>,
     pub webhook_usecase: Arc<ReceiveWebhookUseCase>,
+    pub accept_terms_usecase: Arc<AcceptTermsUseCase>,
+    pub start_session_usecase: Arc<StartSessionUseCase>,
+    pub end_session_usecase: Arc<EndSessionUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -65,6 +71,26 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         config.line.liff_base_url.clone(),
     ));
 
+    let accept_terms_usecase = Arc::new(AcceptTermsUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&line_client),
+    ));
+
+    let start_session_usecase = Arc::new(StartSessionUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.session_repo),
+        Arc::clone(&repos.scene_repo),
+        Arc::clone(&repos.character_repo),
+        Arc::clone(&repos.message_repo),
+        Arc::clone(&line_client),
+    ));
+
+    let end_session_usecase = Arc::new(EndSessionUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.session_repo),
+        Arc::clone(&line_client),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -72,6 +98,9 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         line_client: Arc::clone(&line_client),
         ai_client: Arc::clone(&ai_client),
         webhook_usecase,
+        accept_terms_usecase,
+        start_session_usecase,
+        end_session_usecase,
     };
 
     let app = build_router(state, &config);
@@ -130,6 +159,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
 
     Router::new()
         .route("/webhook", post(webhook::webhook_handler))
+        .nest("/api", liff_api::router())
         .route("/health-check", get(health_check::health_check_handler))
         .route("/ready-check", get(ready_check::ready_check_handler))
         .layer(middleware)
@@ -157,6 +187,7 @@ fn spawn_background_tasks(
         Arc::clone(ai_client),
         Arc::clone(line_client),
         Arc::clone(config_repo),
+        config.line.liff_base_url.clone(),
     ));
 
     let dispatcher = Arc::new(crate::handlers::job_dispatcher::JobDispatcher::new(

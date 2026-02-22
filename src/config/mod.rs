@@ -24,6 +24,8 @@ pub struct LineConfig {
     pub channel_secret: String,
     pub channel_access_token: String,
     pub liff_base_url: String,
+    pub rich_menu_a_id: String,
+    pub rich_menu_b_id: String,
 }
 
 pub struct AiConfig {

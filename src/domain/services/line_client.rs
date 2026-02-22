@@ -34,6 +34,9 @@ pub trait LineClient: Send + Sync {
         loading_seconds: Option<u32>,
     ) -> Result<(), LineClientError>;
 
+    /// Verify LIFF access token by calling LINE Profile API with user's token
+    async fn verify_liff_token(&self, access_token: &str) -> Result<LineProfile, LineClientError>;
+
     /// Reply to a webhook event using a reply token (free, no push quota consumed)
     async fn reply_messages(
         &self,

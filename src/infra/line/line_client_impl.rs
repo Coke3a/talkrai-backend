@@ -16,6 +16,7 @@ const LINE_API_PUSH: &str = "https://api.line.me/v2/bot/message/push";
 const LINE_API_REPLY: &str = "https://api.line.me/v2/bot/message/reply";
 const LINE_API_LOADING: &str = "https://api.line.me/v2/bot/chat/loading/start";
 const LINE_API_PROFILE: &str = "https://api.line.me/v2/bot/profile";
+const LINE_API_USER_PROFILE: &str = "https://api.line.me/v2/profile";
 
 /// Retry delays for transient errors (408, 429, 500).
 const RETRY_DELAYS_MS: &[u64] = &[500, 1500];
@@ -318,6 +319,37 @@ impl LineClient for LineClientImpl {
         }
 
         Ok(())
+    }
+
+    async fn verify_liff_token(&self, access_token: &str) -> Result<LineProfile, LineClientError> {
+        let response = self
+            .http
+            .get(LINE_API_USER_PROFILE)
+            .header("Authorization", format!("Bearer {}", access_token))
+            .send()
+            .await
+            .map_err(|e| LineClientError::NetworkError(e.into()))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let message = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".into());
+            return Err(LineClientError::ApiError { status, message });
+        }
+
+        let profile: ProfileResponse = response
+            .json()
+            .await
+            .map_err(|e| LineClientError::NetworkError(e.into()))?;
+
+        Ok(LineProfile {
+            user_id: profile.user_id,
+            display_name: profile.display_name,
+            picture_url: profile.picture_url,
+            language: profile.language,
+        })
     }
 
     async fn get_profile(&self, line_user_id: &str) -> Result<LineProfile, LineClientError> {

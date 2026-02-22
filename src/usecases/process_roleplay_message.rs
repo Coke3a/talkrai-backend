@@ -1,8 +1,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-use serde_json::json;
-
 use crate::domain::entities::{Character, Job, Message, RoleplaySession, Scene};
 use crate::domain::repositories::{
     AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
@@ -13,7 +11,7 @@ use crate::domain::services::ai_client::{
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, RelationshipThresholds};
-use crate::infra::line::roleplay_flex;
+use crate::infra::line::{flex_messages, roleplay_flex};
 use crate::usecases::UsecaseError;
 
 /// Convert JSON atmosphere blob to compact readable text.
@@ -120,55 +118,92 @@ pub fn build_system_prompt(
     prompt.push_str(
         r#"
 
+## กฎสำคัญ: Pacing & User Agency
+
+### ห้ามกระทำแทน user
+- ห้ามสั่งของ/เรียกคน/ตัดสินใจ/กำหนดความรู้สึก/ขยับร่างกายแทน user
+- ตัวละครทำได้แค่: พูด, แสดงออกของตัวเอง, เสนอ/ถาม — แล้วรอ user ตอบ
+
+### ความยาวตาม input ของ user
+- user สั้น (1-2 ประโยค) → 40-80 คำ, 1-2 action beats
+- user ปานกลาง (3-5 ประโยค) → 80-150 คำ, 2-3 action beats
+- user ยาว (5+ ประโยค) → 150-300 คำ, 3-4 action beats
+- "action beat" = 1 ชุด *บรรยาย* + คำพูด
+
+### 1 เรื่อง 1 รอบ
+- ตอบเฉพาะเรื่องที่ user พูดถึง ห้ามยัดหลาย topic
+- จบด้วยคำถาม 1 ข้อ หรือ *action* ค้างให้ user react
+
 ## Writing Style
 - เขียนแบบนิยายไทย สลับบรรยายกับบทพูดได้อิสระตามธรรมชาติ
-- narration: ร้อยแก้วบรรยายฉาก การกระทำ อารมณ์ ใช้ sensory details (แสง สี เสียง กลิ่น สัมผัส)
-- dialogue: บทพูดตัวละครในเครื่องหมายคำพูด ("...") สะท้อน speaking_style
+- *บรรยาย*: ร้อยแก้วบรรยายฉาก การกระทำ อารมณ์ ใช้ sensory details (แสง สี เสียง กลิ่น สัมผัส)
+- คำพูด: บทพูดตัวละครสะท้อน speaking_style
 - ใช้หลัก Show Don't Tell — บรรยายผ่านร่างกาย (มือสั่น หายใจหนัก หัวใจเต้น) แทนบอกตรงๆ
 - ใช้อุปมาอุปไมย ("ราวกับ..." "ดุจ...")
-- narration block: 2-6 ประโยค, dialogue block: 1-3 ประโยค
-- จบด้วย dialogue หรือ narration ที่ค้างไว้ ให้ user อยากตอบ
 
 ## ความยาว
-- ฉากเข้มข้น/ดราม่า: 4-8 blocks, 200-400 คำ
-- ฉากโรแมนซ์: 3-6 blocks, 150-300 คำ
-- ฉากสบายๆ: 2-4 blocks, 80-150 คำ
+ยึดตาม input ของ user:
+- user สั้น (1-2 ประโยค) → 40-80 คำ | ฉากเข้มข้นอาจถึง 100
+- user ปานกลาง (3-5 ประโยค) → 80-150 คำ | ฉากเข้มข้นอาจถึง 180
+- user ยาว (5+ ประโยค) → 150-300 คำ | ฉากเข้มข้นอาจถึง 350
 
 ## Response Format
-Reply with ONLY a JSON object using blocks array:
-- mood is REQUIRED — always include mood in every response
-- min 2 blocks, min 1 narration, start with narration
-- no 3+ consecutive dialogue blocks
-- vary block pattern creatively — DO NOT always use N→D→N→D
-  - N→D→N: จบด้วย narration สร้างบรรยากาศค้าง
-  - N→D→N→D→N: เล่าเรื่องยาว จบด้วย narration ให้จินตนาการ
-  - N→D: สั้นกระชับ ตอบเร็ว
-  - N→D→N→D: สลับปกติ
+ตอบเป็นข้อความปกติ ห้ามใช้ JSON
+- ครอบบรรยาย/การกระทำด้วย *...* เช่น *เธอยิ้ม*
+- ข้อความนอก *...* คือคำพูดของตัวละคร
+- ห้ามใช้ * ภายในคำพูด
+- เริ่มด้วย *บรรยาย* เสมอ
+- สลับบรรยายกับคำพูดอิสระ ไม่ต้องสลับ N→D→N→D ทุกครั้ง
+- ท้ายสุดใส่ [mood:VALUE] เสมอ
 - mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
-
-{"blocks":[...],"mood":"<REQUIRED>","scene_update":null}
 
 ## Examples
 
 User: สวัสดี มีขนมปังอะไรบ้าง
-{"blocks":[{"type":"narration","text":"เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น"},{"type":"dialogue","text":"\"สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ\""},{"type":"narration","text":"เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ"}],"mood":"happy","scene_update":null}
+*เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น* "สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ" *เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ*
+[mood:happy]
 
 User: *นั่งเงียบๆ ไม่พูดอะไร*
-{"blocks":[{"type":"narration","text":"เสียงเก้าอี้ถูกดึงออกดังแผ่วเบา แสงบ่ายทอดเงายาวผ่านกระจก"},{"type":"dialogue","text":"\"น้ำค่ะ... ดื่มก่อนนะคะ\""},{"type":"narration","text":"เธอวางแก้วน้ำลงตรงหน้าอย่างเบามือ รอยยิ้มบางๆ ผุดขึ้นที่มุมปากก่อนหันกลับไปเช็ดเคาน์เตอร์ต่อ"},{"type":"dialogue","text":"\"ถ้าอยากได้อะไร... บอกได้นะคะ\""},{"type":"narration","text":"เสียงเพลงแจ๊สเบาๆ ไหลแทรกเข้ามาแทนที่บทสนทนา กลิ่นกาแฟคั่วลอยอ้อยอิ่งอยู่ในอากาศ"}],"mood":"worried","scene_update":null}"#,
+*เสียงเก้าอี้ถูกดึงออกดังแผ่วเบา แสงบ่ายทอดเงายาวผ่านกระจก* "น้ำค่ะ... ดื่มก่อนนะคะ" *เธอวางแก้วน้ำลงตรงหน้าอย่างเบามือ รอยยิ้มบางๆ ผุดขึ้นที่มุมปากก่อนหันกลับไปเช็ดเคาน์เตอร์ต่อ* "ถ้าอยากได้อะไร... บอกได้นะคะ" *เสียงเพลงแจ๊สเบาๆ ไหลแทรกเข้ามาแทนที่บทสนทนา กลิ่นกาแฟคั่วลอยอ้อยอิ่งอยู่ในอากาศ*
+[mood:worried]"#,
     );
 
     prompt
 }
 
-/// Wrap character message content for AI conversation format.
-/// JSON blocks array → {"blocks": [...]}
-/// Legacy plain text → {"blocks": [{"type":"dialogue","text":"..."}]}
+/// Wrap character message content for AI conversation context.
+/// Old blocks JSON → convert to text markup.
+/// New text markup or plain text → pass through.
 fn wrap_character_content(raw: &str) -> String {
     if raw.trim_start().starts_with('[') {
-        format!(r#"{{"blocks":{}}}"#, raw)
+        // Old blocks JSON format → convert to text markup
+        blocks_json_to_text_markup(raw)
     } else {
-        json!({"blocks": [{"type": "dialogue", "text": raw}]}).to_string()
+        // New text markup or plain text → pass through
+        raw.to_string()
     }
+}
+
+/// Convert old JSON blocks array to text markup format.
+/// `[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}]` → `*N*\nD`
+fn blocks_json_to_text_markup(json_str: &str) -> String {
+    serde_json::from_str::<Vec<serde_json::Value>>(json_str)
+        .map(|blocks| {
+            blocks
+                .iter()
+                .filter_map(|b| {
+                    let text = b["text"].as_str()?;
+                    let btype = b["type"].as_str().unwrap_or("dialogue");
+                    Some(if btype == "narration" {
+                        format!("*{}*", text)
+                    } else {
+                        text.to_string()
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .unwrap_or_else(|_| json_str.to_string())
 }
 
 pub fn build_ai_messages(
@@ -216,6 +251,7 @@ pub struct ProcessRoleplayMessageUseCase {
     ai_client: Arc<dyn AiClient>,
     line_client: Arc<dyn LineClient>,
     config_repo: Arc<dyn AppConfigRepository>,
+    liff_base_url: String,
 }
 
 struct ResolvedConfig {
@@ -240,6 +276,7 @@ impl ProcessRoleplayMessageUseCase {
         ai_client: Arc<dyn AiClient>,
         line_client: Arc<dyn LineClient>,
         config_repo: Arc<dyn AppConfigRepository>,
+        liff_base_url: String,
     ) -> Self {
         Self {
             job_repo,
@@ -251,6 +288,7 @@ impl ProcessRoleplayMessageUseCase {
             ai_client,
             line_client,
             config_repo,
+            liff_base_url,
         }
     }
 
@@ -353,6 +391,24 @@ impl ProcessRoleplayMessageUseCase {
         match self.process_job(&mut job).await {
             Ok(()) => Ok(()),
             Err(e) => {
+                if matches!(e, UsecaseError::InsufficientCredits) {
+                    let credits_url = format!("{}/credits", self.liff_base_url);
+                    let bubble = flex_messages::build_insufficient_credits_flex(&credits_url);
+                    let messages = vec![LineMessage::Flex {
+                        alt_text: "เครดิตหมดแล้ว กดเพื่อเติมเครดิต".into(),
+                        contents: bubble,
+                        sender_name: "TalkRai".into(),
+                        sender_icon_url: String::new(),
+                    }];
+                    if let Err(push_err) = self
+                        .line_client
+                        .push_messages(job.line_user_id(), messages)
+                        .await
+                    {
+                        tracing::warn!(error = %push_err, "Failed to push insufficient credits notification");
+                    }
+                }
+
                 tracing::error!(job_id = %job.id().as_uuid(), error = %e, "Job processing failed");
                 let _ = job.fail(e.to_string());
                 let _ = self.job_repo.update(&job).await;
@@ -438,7 +494,7 @@ impl ProcessRoleplayMessageUseCase {
         let character_msg = Message::new(
             session.id().clone(),
             MessageRole::Character,
-            ai_response.blocks_json(),
+            ai_response.content_text(),
             ai_response.mood.clone(),
         );
         self.message_repo
@@ -458,13 +514,6 @@ impl ProcessRoleplayMessageUseCase {
             if let Ok(mood) = CharacterMood::from_str(mood_str) {
                 session.update_mood(mood);
             }
-        }
-        if let Some(scene_update) = &ai_response.scene_update {
-            session.update_scene_context(
-                scene_update.location.clone(),
-                scene_update.time.clone(),
-                scene_update.summary.clone(),
-            );
         }
         let level_up = session.increment_messages(&cfg.relationship_thresholds);
         self.session_repo.update(&session).await?;
@@ -772,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn build_ai_messages_character_json_blocks() {
+    fn build_ai_messages_character_old_json_blocks() {
         let session_id = SessionId::new();
         let blocks_json = r#"[{"type":"narration","text":"📍 ร้านกาแฟ • 🕒 บ่าย"},{"type":"dialogue","text":"สวัสดีค่า~"}]"#;
         let messages = vec![Message::from_existing(
@@ -788,18 +837,13 @@ mod tests {
 
         assert_eq!(result.len(), 2); // 1 assistant + 1 current user
         assert_eq!(result[0].role, "assistant");
-
-        let parsed: serde_json::Value = serde_json::from_str(&result[0].content).unwrap();
-        let blocks = parsed["blocks"].as_array().unwrap();
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0]["type"], "narration");
-        assert_eq!(blocks[0]["text"], "📍 ร้านกาแฟ • 🕒 บ่าย");
-        assert_eq!(blocks[1]["type"], "dialogue");
-        assert_eq!(blocks[1]["text"], "สวัสดีค่า~");
+        // Old JSON blocks should be converted to text markup
+        assert!(result[0].content.contains("*📍 ร้านกาแฟ • 🕒 บ่าย*"));
+        assert!(result[0].content.contains("สวัสดีค่า~"));
     }
 
     #[test]
-    fn build_ai_messages_legacy_plain_text_character() {
+    fn build_ai_messages_plain_text_character() {
         let messages = vec![Message::from_existing(
             MessageId::new(),
             SessionId::new(),
@@ -812,11 +856,26 @@ mod tests {
         let result = build_ai_messages(&messages, "test");
 
         assert_eq!(result[0].role, "assistant");
-        let parsed: serde_json::Value = serde_json::from_str(&result[0].content).unwrap();
-        let blocks = parsed["blocks"].as_array().unwrap();
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0]["type"], "dialogue");
-        assert_eq!(blocks[0]["text"], "สวัสดีค่า~");
+        // Plain text passes through as-is
+        assert_eq!(result[0].content, "สวัสดีค่า~");
+    }
+
+    #[test]
+    fn build_ai_messages_text_markup_character() {
+        let messages = vec![Message::from_existing(
+            MessageId::new(),
+            SessionId::new(),
+            MessageRole::Character,
+            "*เธอยิ้ม*\nสวัสดีค่า~".to_string(),
+            Some("happy".to_string()),
+            chrono::Utc::now(),
+        )];
+
+        let result = build_ai_messages(&messages, "test");
+
+        assert_eq!(result[0].role, "assistant");
+        // New text markup passes through as-is
+        assert_eq!(result[0].content, "*เธอยิ้ม*\nสวัสดีค่า~");
     }
 
     #[test]
@@ -857,6 +916,8 @@ mod tests {
         assert_eq!(result[0].role, "user");
         assert_eq!(result[0].content, "สวัสดี");
         assert_eq!(result[1].role, "assistant");
+        // Old JSON blocks converted to text markup
+        assert!(result[1].content.contains("*📍 ร้านขนมปัง • 🕒 เช้า*"));
         assert_eq!(result[2].role, "user");
         assert_eq!(result[2].content, "มีขนมปังอะไรบ้าง");
         assert_eq!(result[3].role, "user");
@@ -864,34 +925,52 @@ mod tests {
     }
 
     #[test]
-    fn build_system_prompt_includes_json_format() {
+    fn build_system_prompt_includes_text_markup_format() {
         let character = test_character();
         let scene = test_scene();
         let session = test_session();
 
         let prompt = build_system_prompt(&character, &scene, &session);
 
-        assert!(prompt.contains("blocks"));
-        assert!(prompt.contains("narration"));
-        assert!(prompt.contains("dialogue"));
-        assert!(prompt.contains("scene_update"));
-        assert!(prompt.contains("Reply with ONLY a JSON object"));
+        assert!(prompt.contains("*บรรยาย*"));
+        assert!(prompt.contains("[mood:"));
+        assert!(prompt.contains("ห้ามใช้ JSON"));
+        assert!(!prompt.contains("Reply with ONLY a JSON object"));
+        assert!(!prompt.contains("scene_update"));
     }
 
     #[test]
-    fn wrap_character_content_json_array() {
-        let json = r#"[{"type":"narration","text":"hello"}]"#;
+    fn wrap_character_content_converts_old_blocks_to_markup() {
+        let json = r#"[{"type":"narration","text":"เธอยิ้ม"},{"type":"dialogue","text":"สวัสดี"}]"#;
         let result = wrap_character_content(json);
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert!(parsed["blocks"].is_array());
+        assert_eq!(result, "*เธอยิ้ม*\nสวัสดี");
     }
 
     #[test]
-    fn wrap_character_content_plain_text() {
+    fn wrap_character_content_plain_text_passthrough() {
         let result = wrap_character_content("plain text");
-        let parsed: serde_json::Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(parsed["blocks"][0]["type"], "dialogue");
-        assert_eq!(parsed["blocks"][0]["text"], "plain text");
+        assert_eq!(result, "plain text");
+    }
+
+    #[test]
+    fn wrap_character_content_text_markup_passthrough() {
+        let markup = "*เธอยิ้ม*\nสวัสดีค่า~";
+        let result = wrap_character_content(markup);
+        assert_eq!(result, markup);
+    }
+
+    #[test]
+    fn blocks_json_to_text_markup_valid() {
+        let json = r#"[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}]"#;
+        let result = blocks_json_to_text_markup(json);
+        assert_eq!(result, "*N*\nD");
+    }
+
+    #[test]
+    fn blocks_json_to_text_markup_fallback() {
+        let broken = "not json at all";
+        let result = blocks_json_to_text_markup(broken);
+        assert_eq!(result, broken);
     }
 
     #[test]

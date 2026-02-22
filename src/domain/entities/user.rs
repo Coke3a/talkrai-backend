@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 
+use crate::domain::error::DomainError;
 use crate::domain::value_objects::UserId;
 
 pub struct User {
@@ -91,5 +92,16 @@ impl User {
         self.display_name = display_name;
         self.picture_url = picture_url;
         self.updated_at = Utc::now();
+    }
+
+    pub fn accept_terms(&mut self) -> Result<(), DomainError> {
+        if self.terms_accepted_at.is_some() {
+            return Err(DomainError::BusinessRuleViolation(
+                "Terms already accepted".into(),
+            ));
+        }
+        self.terms_accepted_at = Some(Utc::now());
+        self.updated_at = Utc::now();
+        Ok(())
     }
 }

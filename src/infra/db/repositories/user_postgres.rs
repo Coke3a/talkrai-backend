@@ -106,6 +106,23 @@ impl UserRepository for UserPostgres {
         Ok(result.map(|row| row.into_entity()))
     }
 
+    async fn update(&self, user: &User) -> Result<(), RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        diesel::update(users::table.find(user.id().as_uuid()))
+            .set((
+                users::display_name.eq(user.display_name()),
+                users::picture_url.eq(user.picture_url()),
+                users::terms_accepted_at.eq(user.terms_accepted_at().copied()),
+                users::updated_at.eq(user.updated_at()),
+            ))
+            .execute(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("user.update", e))?;
+
+        Ok(())
+    }
+
     async fn upsert(&self, user: &User) -> Result<(), RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 

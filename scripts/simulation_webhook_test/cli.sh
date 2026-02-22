@@ -322,127 +322,6 @@ select_scene() {
 # Actions
 # ---------------------------------------------------------------------------
 
-action_list_users() {
-    echo -e "\n${BOLD}Users (latest 20)${RESET}"
-    db_query_table "
-        SELECT
-            u.id            AS \"User ID\",
-            u.line_user_id  AS \"LINE ID\",
-            COALESCE(u.display_name, '-') AS \"Display Name\",
-            CASE WHEN u.terms_accepted_at IS NOT NULL THEN 'Yes' ELSE 'No' END AS \"Terms\",
-            COALESCE(cb.balance::text, '-') AS \"Credits\",
-            COALESCE(c.name || ' / ' || sc.name, '-') AS \"Active Session\"
-        FROM users u
-        LEFT JOIN credit_balances cb ON cb.user_id = u.id
-        LEFT JOIN roleplay_sessions rs ON rs.user_id = u.id AND rs.status = 'active'
-        LEFT JOIN characters c ON c.id = rs.character_id
-        LEFT JOIN scenes sc ON sc.id = rs.scene_id
-        ORDER BY u.created_at DESC
-        LIMIT 20
-    "
-}
-
-action_list_scenes() {
-    echo -e "\n${BOLD}Active Characters & Scenes${RESET}"
-    db_query_table "
-        SELECT
-            c.name                      AS \"Character\",
-            c.gender                    AS \"Gender\",
-            s.id                        AS \"Scene ID\",
-            s.name                      AS \"Scene Name\",
-            s.location                  AS \"Location\",
-            s.start_mood                AS \"Mood\",
-            s.start_relationship_level  AS \"Relationship\"
-        FROM characters c
-        JOIN scenes s ON s.character_id = c.id
-        WHERE c.is_active = true AND s.is_active = true
-        ORDER BY c.name, s.name
-    "
-    local count
-    count=$(db_query "
-        SELECT COUNT(*)
-        FROM characters c
-        JOIN scenes s ON s.character_id = c.id
-        WHERE c.is_active = true AND s.is_active = true
-    ")
-    echo -e "${DIM}${count} scenes total${RESET}"
-}
-
-action_show_status() {
-    select_user || return
-    local user_id="$SELECTED_USER_ID"
-
-    echo ""
-    print_user_status "$user_id" "$SELECTED_LINE_ID" "$SELECTED_DISPLAY_NAME" "$SELECTED_TERMS_AT"
-
-    # Recent messages
-    echo ""
-    local msg_rows
-    msg_rows=$(db_query "
-        SELECT m.role, m.message_type,
-               CASE WHEN LENGTH(m.content) > 60
-                    THEN SUBSTRING(m.content, 1, 57) || '...'
-                    ELSE m.content END,
-               TO_CHAR(m.created_at, 'HH24:MI:SS')
-        FROM messages m
-        JOIN roleplay_sessions rs ON rs.id = m.session_id
-        WHERE rs.user_id = '$user_id'
-        ORDER BY m.created_at DESC
-        LIMIT 5
-    ")
-
-    if [[ -n "$msg_rows" ]]; then
-        echo -e "${BOLD}Recent Messages (latest 5)${RESET}"
-        db_query_table "
-            SELECT
-                TO_CHAR(m.created_at, 'HH24:MI:SS') AS \"Time\",
-                m.role                               AS \"Role\",
-                m.message_type                       AS \"Type\",
-                CASE WHEN LENGTH(m.content) > 60
-                     THEN SUBSTRING(m.content, 1, 57) || '...'
-                     ELSE m.content END              AS \"Content\"
-            FROM messages m
-            JOIN roleplay_sessions rs ON rs.id = m.session_id
-            WHERE rs.user_id = '$user_id'
-            ORDER BY m.created_at DESC
-            LIMIT 5
-        "
-    else
-        echo -e "${DIM}No messages yet.${RESET}"
-    fi
-
-    # Recent jobs
-    echo ""
-    local job_rows
-    job_rows=$(db_query "
-        SELECT id FROM jobs WHERE user_id = '$user_id' LIMIT 1
-    ")
-
-    if [[ -n "$job_rows" ]]; then
-        echo -e "${BOLD}Recent Jobs (latest 3)${RESET}"
-        db_query_table "
-            SELECT
-                SUBSTRING(id::text, 1, 8) || '...' AS \"Job ID\",
-                mode                               AS \"Mode\",
-                status                             AS \"Status\",
-                attempts                           AS \"Attempts\",
-                TO_CHAR(created_at, 'HH24:MI:SS')  AS \"Created\",
-                COALESCE(
-                    CASE WHEN LENGTH(failed_reason) > 40
-                         THEN SUBSTRING(failed_reason, 1, 37) || '...'
-                         ELSE failed_reason END,
-                    ''
-                )                                  AS \"Error\"
-            FROM jobs
-            WHERE user_id = '$user_id'
-            ORDER BY created_at DESC
-            LIMIT 3
-        "
-    else
-        echo -e "${DIM}No jobs yet.${RESET}"
-    fi
-}
-
 action_accept_terms() {
     select_user || return
 
@@ -636,13 +515,10 @@ main() {
     check_deps
 
     local options=(
-        "List Users"
-        "List Scenes"
-        "Show User Status"
         "Accept Terms"
-        "Create Session"
-        "Restart Session"
+        "Select Scene & Create Session"
         "End Session"
+        "Restart Session"
         "Set Credits"
         "Exit"
     )
@@ -652,16 +528,13 @@ main() {
         echo ""
         select choice in "${options[@]}"; do
             case "$choice" in
-                "List Users")       action_list_users ;;
-                "List Scenes")      action_list_scenes ;;
-                "Show User Status") action_show_status ;;
-                "Accept Terms")     action_accept_terms ;;
-                "Create Session")   action_create_session ;;
-                "Restart Session")  action_restart_session ;;
-                "End Session")      action_end_session ;;
-                "Set Credits")      action_set_credits ;;
-                "Exit")             echo -e "\n${DIM}Bye!${RESET}"; return ;;
-                *)                  echo -e "${RED}Invalid option${RESET}"; continue ;;
+                "Accept Terms")                 action_accept_terms ;;
+                "Select Scene & Create Session") action_create_session ;;
+                "End Session")                  action_end_session ;;
+                "Restart Session")              action_restart_session ;;
+                "Set Credits")                  action_set_credits ;;
+                "Exit")                         echo -e "\n${DIM}Bye!${RESET}"; return ;;
+                *)                              echo -e "${RED}Invalid option${RESET}"; continue ;;
             esac
             break
         done

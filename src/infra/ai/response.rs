@@ -1,40 +1,12 @@
-use serde::Deserialize;
+use std::sync::LazyLock;
 
-use crate::domain::services::ai_client::{
-    AiRoleplayResponse, AiSceneUpdate, BlockType, ResponseBlock,
-};
+use regex::Regex;
+
+use crate::domain::services::ai_client::{AiRoleplayResponse, BlockType, ResponseBlock};
 use crate::domain::services::AiClientError;
 
-/// New blocks-format output from LLM.
-#[derive(Debug, Deserialize)]
-struct LlmBlocksOutput {
-    blocks: Vec<LlmBlock>,
-    mood: Option<String>,
-    scene_update: Option<LlmSceneUpdate>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LlmBlock {
-    #[serde(rename = "type")]
-    block_type: String,
-    text: String,
-}
-
-/// Legacy 2-field output (backward compatibility).
-#[derive(Debug, Deserialize)]
-struct LlmRoleplayOutput {
-    narrator_text: String,
-    character_text: String,
-    mood: Option<String>,
-    scene_update: Option<LlmSceneUpdate>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct LlmSceneUpdate {
-    pub location: Option<String>,
-    pub time: Option<String>,
-    pub summary: Option<String>,
-}
+static MOOD_TAG_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[mood:([^\]]+)\]\s*$").unwrap());
 
 /// Build a system prompt for conversation summarization.
 pub fn build_summary_system_prompt(existing_summary: &Option<String>) -> String {
@@ -55,14 +27,19 @@ pub fn build_summary_system_prompt(existing_summary: &Option<String>) -> String 
     prompt
 }
 
-/// Strip markdown code fences (```json ... ```) and parse JSON into `AiRoleplayResponse`.
+/// Parse LLM text markup response into `AiRoleplayResponse`.
 ///
-/// Tries blocks format first, then falls back to legacy narrator_text/character_text format.
+/// Format: `*narration* dialogue *narration*` with optional `[mood:VALUE]` at end.
+/// Never fails except on completely empty input.
 pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError> {
     let trimmed = raw.trim();
 
+    if trimmed.is_empty() {
+        return Err(AiClientError::ParseError("Empty LLM response".to_string()));
+    }
+
     // Strip markdown fences if present
-    let json_str = if trimmed.starts_with("```") {
+    let content = if trimmed.starts_with("```") {
         let without_opening = trimmed
             .strip_prefix("```json")
             .or_else(|| trimmed.strip_prefix("```"))
@@ -75,475 +52,256 @@ pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError
         trimmed
     };
 
-    // Try parsing full text — blocks first, then legacy
-    if let Some(resp) = try_parse(json_str) {
-        return Ok(resp);
-    }
+    let (text, mood) = extract_mood_tag(content);
+    let blocks = parse_text_into_blocks(&text);
 
-    // Try repairing JSON then parsing
-    let repaired = repair_json(json_str);
-    if let Some(resp) = try_parse(&repaired) {
-        return Ok(resp);
-    }
-
-    // Fallback: extract last JSON object from mixed content
-    if let Some(extracted) = extract_last_json_object(json_str) {
-        if let Some(resp) = try_parse(extracted) {
-            return Ok(resp);
-        }
-        let repaired_extracted = repair_json(extracted);
-        if let Some(resp) = try_parse(&repaired_extracted) {
-            return Ok(resp);
-        }
-    }
-
-    Err(AiClientError::ParseError(format!(
-        "Failed to parse LLM JSON (tried blocks and legacy formats)\nRaw: {raw}"
-    )))
+    Ok(AiRoleplayResponse { blocks, mood })
 }
 
-/// Try parsing as blocks format. Returns None if parsing or validation fails.
-fn try_parse_blocks(json_str: &str) -> Option<AiRoleplayResponse> {
-    let output: LlmBlocksOutput = serde_json::from_str(json_str).ok()?;
-
-    // Validate: min 2 blocks, min 1 narration
-    if output.blocks.len() < 2 {
-        return None;
+/// Extract `[mood:VALUE]` tag from end of text.
+/// Returns (text_without_tag, Option<mood_value>).
+fn extract_mood_tag(text: &str) -> (String, Option<String>) {
+    if let Some(caps) = MOOD_TAG_RE.captures(text) {
+        let mood = caps[1].trim().to_string();
+        let without_tag = MOOD_TAG_RE.replace(text, "").trim().to_string();
+        (without_tag, Some(mood))
+    } else {
+        (text.to_string(), None)
     }
-    let has_narration = output
-        .blocks
-        .iter()
-        .any(|b| b.block_type == "narration" && !b.text.trim().is_empty());
-    if !has_narration {
-        return None;
+}
+
+/// Parse text markup into blocks using stack-based char scanner.
+///
+/// `*...*` = narration, everything else = dialogue.
+/// `*` inside `"..."` is regular text; `"` inside `*...*` is regular text.
+/// Never returns empty vec for non-empty input.
+fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
+    let mut blocks: Vec<ResponseBlock> = Vec::new();
+    let mut buffer = String::new();
+    let mut in_narration = false;
+    let mut in_quote = false;
+
+    for ch in text.chars() {
+        match ch {
+            '*' if !in_quote => {
+                // Flush buffer as current type
+                let trimmed = buffer.trim().to_string();
+                if !trimmed.is_empty() {
+                    blocks.push(ResponseBlock {
+                        block_type: if in_narration {
+                            BlockType::Narration
+                        } else {
+                            BlockType::Dialogue
+                        },
+                        text: trimmed,
+                    });
+                }
+                buffer.clear();
+                in_narration = !in_narration;
+            }
+            '"' if !in_narration => {
+                in_quote = !in_quote;
+                buffer.push(ch);
+            }
+            _ => {
+                buffer.push(ch);
+            }
+        }
     }
 
-    let blocks: Vec<ResponseBlock> = output
-        .blocks
-        .into_iter()
-        .filter(|b| !b.text.trim().is_empty())
-        .map(|b| ResponseBlock {
-            block_type: if b.block_type == "dialogue" {
-                BlockType::Dialogue
-            } else {
+    // Flush remaining buffer
+    let trimmed = buffer.trim().to_string();
+    if !trimmed.is_empty() {
+        blocks.push(ResponseBlock {
+            block_type: if in_narration {
                 BlockType::Narration
+            } else {
+                BlockType::Dialogue
             },
-            text: b.text,
-        })
-        .collect();
-
-    if blocks.len() < 2 {
-        return None;
+            text: trimmed,
+        });
     }
 
-    Some(AiRoleplayResponse {
-        blocks,
-        mood: output.mood,
-        scene_update: output.scene_update.map(convert_scene_update),
-    })
-}
-
-/// Try parsing as legacy narrator_text/character_text format.
-fn try_parse_legacy(json_str: &str) -> Option<AiRoleplayResponse> {
-    let output: LlmRoleplayOutput = serde_json::from_str(json_str).ok()?;
-
-    if output.narrator_text.trim().is_empty() || output.character_text.trim().is_empty() {
-        return None;
-    }
-
-    let blocks = vec![
-        ResponseBlock {
-            block_type: BlockType::Narration,
-            text: output.narrator_text,
-        },
-        ResponseBlock {
+    // Never return empty for non-empty input
+    if blocks.is_empty() {
+        blocks.push(ResponseBlock {
             block_type: BlockType::Dialogue,
-            text: output.character_text,
-        },
-    ];
-
-    Some(AiRoleplayResponse {
-        blocks,
-        mood: output.mood,
-        scene_update: output.scene_update.map(convert_scene_update),
-    })
-}
-
-fn convert_scene_update(su: LlmSceneUpdate) -> AiSceneUpdate {
-    AiSceneUpdate {
-        location: su.location,
-        time: su.time,
-        summary: su.summary,
-    }
-}
-
-/// Repair common LLM JSON errors **outside** of string values.
-///
-/// Fixes:
-/// - Stray `(` `)` outside strings → removed
-/// - Trailing commas `,]` `,}` → comma removed
-///
-/// Characters inside JSON string values are never touched.
-fn repair_json(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut in_string = false;
-    let mut i = 0;
-
-    while i < bytes.len() {
-        let b = bytes[i];
-
-        if in_string {
-            out.push(b);
-            if b == b'"' {
-                // Count preceding backslashes to determine if this quote is escaped
-                let mut backslashes = 0;
-                while backslashes < out.len() - 1 && out[out.len() - 2 - backslashes] == b'\\' {
-                    backslashes += 1;
-                }
-                if backslashes % 2 == 0 {
-                    in_string = false;
-                }
-            }
-            i += 1;
-            continue;
-        }
-
-        // Outside string
-        match b {
-            b'"' => {
-                in_string = true;
-                out.push(b);
-            }
-            // Remove stray parentheses outside strings
-            b'(' | b')' => { /* skip */ }
-            // Remove trailing commas before ] or }
-            b',' => {
-                // Peek ahead past whitespace to see if next non-ws char is ] or }
-                let mut j = i + 1;
-                while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-                    j += 1;
-                }
-                if j < bytes.len() && (bytes[j] == b']' || bytes[j] == b'}') {
-                    // Skip this comma (trailing comma)
-                } else {
-                    out.push(b);
-                }
-            }
-            _ => out.push(b),
-        }
-        i += 1;
+            text: text.trim().to_string(),
+        });
     }
 
-    String::from_utf8(out).expect("repair_json: removed only ASCII bytes from valid UTF-8")
-}
-
-/// Try parsing a JSON string as either blocks or legacy format.
-fn try_parse(json_str: &str) -> Option<AiRoleplayResponse> {
-    try_parse_blocks(json_str).or_else(|| try_parse_legacy(json_str))
-}
-
-/// Find the last top-level `{...}` block in a string by scanning for balanced braces.
-fn extract_last_json_object(text: &str) -> Option<&str> {
-    let bytes = text.as_bytes();
-    let mut last_start = None;
-
-    // Scan backwards for the last '{' that starts a balanced block
-    let mut i = bytes.len();
-    while i > 0 {
-        i -= 1;
-        if bytes[i] == b'}' {
-            // Found a closing brace — walk backwards to find its matching '{'
-            if let Some(start) = find_matching_open_brace(bytes, i) {
-                let candidate = &text[start..=i];
-                if candidate.contains("blocks") || candidate.contains("narrator_text") {
-                    last_start = Some(start);
-                    break;
-                }
-            }
-        }
-    }
-
-    last_start.map(|start| {
-        // Find the matching '}' going forward from start for a clean slice
-        let end = find_matching_close_brace(bytes, start).unwrap_or(bytes.len() - 1);
-        &text[start..=end]
-    })
-}
-
-/// Given the index of a '}', walk backwards to find the matching '{', respecting nesting.
-fn find_matching_open_brace(bytes: &[u8], close_pos: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut in_string = false;
-
-    // Reverse scan counting braces to find the matching '{'.
-    let mut i = close_pos;
-    loop {
-        match bytes[i] {
-            b'}' if !in_string => depth += 1,
-            b'{' if !in_string => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            b'"' => {
-                // Rough check: toggle in_string unless preceded by backslash
-                if i == 0 || bytes[i - 1] != b'\\' {
-                    in_string = !in_string;
-                }
-            }
-            _ => {}
-        }
-        if i == 0 {
-            break;
-        }
-        i -= 1;
-    }
-    None
-}
-
-/// Given the index of a '{', walk forward to find the matching '}', respecting nesting.
-fn find_matching_close_brace(bytes: &[u8], open_pos: usize) -> Option<usize> {
-    let mut depth = 0i32;
-    let mut in_string = false;
-
-    for i in open_pos..bytes.len() {
-        match bytes[i] {
-            b'{' if !in_string => depth += 1,
-            b'}' if !in_string => {
-                depth -= 1;
-                if depth == 0 {
-                    return Some(i);
-                }
-            }
-            b'"' => {
-                if i == 0 || bytes[i - 1] != b'\\' {
-                    in_string = !in_string;
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    blocks
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::services::ai_client::BlockType;
-
-    // --- Blocks format tests ---
 
     #[test]
-    fn parse_blocks_format() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"ลมพัดเบาๆ"},{"type":"dialogue","text":"\"สวัสดีค่า~\""}],"mood":"happy","scene_update":null}"#;
+    fn parse_basic() {
+        let raw = "*เธอยิ้ม* สวัสดีค่า *เธอโบกมือ*";
         let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.blocks.len(), 3);
         assert_eq!(result.blocks[0].block_type, BlockType::Narration);
-        assert_eq!(result.blocks[0].text, "ลมพัดเบาๆ");
+        assert_eq!(result.blocks[0].text, "เธอยิ้ม");
         assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
-        assert!(result.blocks[1].text.contains("สวัสดีค่า~"));
-        assert_eq!(result.mood, Some("happy".to_string()));
-        assert!(result.scene_update.is_none());
+        assert_eq!(result.blocks[1].text, "สวัสดีค่า");
+        assert_eq!(result.blocks[2].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[2].text, "เธอโบกมือ");
+        assert!(result.mood.is_none());
     }
 
     #[test]
-    fn parse_blocks_multiple() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"N1"},{"type":"dialogue","text":"D1"},{"type":"narration","text":"N2"},{"type":"dialogue","text":"D2"}],"mood":"playful","scene_update":null}"#;
+    fn parse_with_mood() {
+        let raw = "*เธอยิ้ม* สวัสดีค่า\n[mood:playful]";
         let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 4);
+        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.blocks[0].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
+        assert_eq!(result.mood, Some("playful".to_string()));
+    }
+
+    #[test]
+    fn parse_production_pattern() {
+        let raw = r#"*เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น* "สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ" *เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ*
+[mood:happy]"#;
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 3);
         assert_eq!(result.blocks[0].block_type, BlockType::Narration);
         assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
         assert_eq!(result.blocks[2].block_type, BlockType::Narration);
-        assert_eq!(result.blocks[3].block_type, BlockType::Dialogue);
+        assert_eq!(result.mood, Some("happy".to_string()));
+        assert!(result.blocks[0].text.contains("กระดิ่ง"));
+        assert!(result.blocks[1].text.contains("สวัสดีค่า~"));
+        assert!(result.blocks[2].text.contains("ตะกร้าหวาย"));
     }
 
     #[test]
-    fn parse_blocks_markdown_fenced() {
-        let raw = "```json\n{\"blocks\":[{\"type\":\"narration\",\"text\":\"N\"},{\"type\":\"dialogue\",\"text\":\"D\"}],\"mood\":\"neutral\",\"scene_update\":null}\n```";
+    fn parse_dialogue_only() {
+        let raw = "สวัสดีค่า ยินดีต้อนรับนะคะ";
         let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].block_type, BlockType::Dialogue);
+        assert_eq!(result.blocks[0].text, "สวัสดีค่า ยินดีต้อนรับนะคะ");
     }
 
     #[test]
-    fn parse_blocks_with_text_before() {
-        let raw = r#"Here is the response:
-
-{"blocks":[{"type":"narration","text":"ลมพัด"},{"type":"dialogue","text":"สวัสดี"}],"mood":"happy","scene_update":null}"#;
+    fn parse_preserves_quotes() {
+        let raw = r#"*เธอยิ้ม* "สวัสดี" *พยักหน้า*"#;
         let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
+        assert_eq!(result.blocks.len(), 3);
+        assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
+        assert!(result.blocks[1].text.contains('"'));
     }
 
     #[test]
-    fn parse_blocks_rejects_single_block() {
-        // blocks format requires min 2 blocks — should fail blocks, but might work as legacy fallback...
-        // Actually this has no narrator_text either, so it fails both
-        let raw = r#"{"blocks":[{"type":"narration","text":"only one"}],"mood":"neutral","scene_update":null}"#;
-        let result = parse_llm_response(raw);
-        assert!(result.is_err());
+    fn parse_unclosed_asterisk() {
+        let raw = "*เธอยิ้ม* สวัสดี *เธอโบกมือ";
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 3);
+        assert_eq!(result.blocks[0].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
+        assert_eq!(result.blocks[2].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[2].text, "เธอโบกมือ");
     }
 
     #[test]
-    fn parse_blocks_rejects_no_narration() {
-        let raw = r#"{"blocks":[{"type":"dialogue","text":"D1"},{"type":"dialogue","text":"D2"}],"mood":"neutral","scene_update":null}"#;
-        let result = parse_llm_response(raw);
-        assert!(result.is_err());
-    }
-
-    // --- Legacy format tests (backward compat) ---
-
-    #[test]
-    fn parse_legacy_clean_json() {
-        let raw = r#"{"narrator_text":"📍 ร้าน","character_text":"สวัสดี","mood":"happy","scene_update":null}"#;
+    fn parse_unclosed_quote() {
+        let raw = r#"*เธอยิ้ม* "สวัสดี ไม่ปิด"#;
         let result = parse_llm_response(raw).unwrap();
         assert_eq!(result.blocks.len(), 2);
         assert_eq!(result.blocks[0].block_type, BlockType::Narration);
-        assert_eq!(result.blocks[0].text, "📍 ร้าน");
         assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
-        assert_eq!(result.blocks[1].text, "สวัสดี");
+    }
+
+    #[test]
+    fn parse_asterisk_inside_quotes() {
+        let raw = r#"*N* "D *not narration* D" *N2*"#;
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 3);
+        assert_eq!(result.blocks[0].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[0].text, "N");
+        assert_eq!(result.blocks[1].block_type, BlockType::Dialogue);
+        assert!(result.blocks[1].text.contains("*not narration*"));
+        assert_eq!(result.blocks[2].block_type, BlockType::Narration);
+        assert_eq!(result.blocks[2].text, "N2");
+    }
+
+    #[test]
+    fn parse_quote_inside_narration() {
+        let raw = r#"*เธอพูดว่า "อะไรนะ" แล้วหัวเราะ*"#;
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 1);
+        assert_eq!(result.blocks[0].block_type, BlockType::Narration);
+        assert!(result.blocks[0].text.contains(r#""อะไรนะ""#));
+    }
+
+    #[test]
+    fn parse_malformed_mood_tag() {
+        let raw = "*เธอยิ้ม* สวัสดี [mood:";
+        let result = parse_llm_response(raw).unwrap();
+        assert!(result.mood.is_none());
+        // The malformed tag text stays as content
+        assert_eq!(result.blocks.len(), 2);
+    }
+
+    #[test]
+    fn parse_no_mood_tag() {
+        let raw = "*เธอยิ้ม* สวัสดี";
+        let result = parse_llm_response(raw).unwrap();
+        assert!(result.mood.is_none());
+    }
+
+    #[test]
+    fn parse_markdown_fenced() {
+        let raw = "```\n*เธอยิ้ม* สวัสดี\n[mood:happy]\n```";
+        let result = parse_llm_response(raw).unwrap();
+        assert_eq!(result.blocks.len(), 2);
         assert_eq!(result.mood, Some("happy".to_string()));
     }
 
     #[test]
-    fn parse_legacy_markdown_fenced() {
-        let raw = "```json\n{\"narrator_text\":\"N\",\"character_text\":\"C\",\"mood\":\"neutral\",\"scene_update\":null}\n```";
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
-        assert_eq!(result.blocks[0].text, "N");
-        assert_eq!(result.blocks[1].text, "C");
-    }
-
-    #[test]
-    fn parse_legacy_with_text_before() {
-        let raw = r#"📍 ร้านราเมนเล็กๆ ย่านสีลม • 🕒 เย็น
-Some narrative text here...
-
-{"narrator_text":"📍 ร้าน","character_text":"สวัสดีค่า~","mood":"playful","scene_update":null}"#;
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks[0].text, "📍 ร้าน");
-        assert_eq!(result.blocks[1].text, "สวัสดีค่า~");
-        assert_eq!(result.mood, Some("playful".to_string()));
-    }
-
-    #[test]
-    fn parse_legacy_with_text_before_and_after() {
-        let raw = r#"Here is the response:
-
-{"narrator_text":"N","character_text":"C","mood":"happy","scene_update":null}
-
-Hope that helps!"#;
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks[0].text, "N");
-        assert_eq!(result.blocks[1].text, "C");
-    }
-
-    #[test]
-    fn parse_invalid_json_returns_error() {
-        let raw = "this is not json at all";
-        let result = parse_llm_response(raw);
+    fn parse_empty_returns_error() {
+        let result = parse_llm_response("");
         assert!(result.is_err());
+        let result2 = parse_llm_response("   ");
+        assert!(result2.is_err());
     }
 
     #[test]
-    fn parse_legacy_both_empty_returns_error() {
-        let raw =
-            r#"{"narrator_text":"","character_text":"","mood":"neutral","scene_update":null}"#;
-        let result = parse_llm_response(raw);
-        assert!(result.is_err());
+    fn extract_mood_tag_valid() {
+        let (text, mood) = extract_mood_tag("สวัสดี\n[mood:happy]");
+        assert_eq!(mood, Some("happy".to_string()));
+        assert_eq!(text, "สวัสดี");
     }
 
     #[test]
-    fn parse_legacy_one_empty_returns_error() {
-        let raw =
-            r#"{"narrator_text":"","character_text":"สวัสดี","mood":"neutral","scene_update":null}"#;
-        let result = parse_llm_response(raw);
-        assert!(result.is_err());
+    fn extract_mood_tag_malformed() {
+        let (text, mood) = extract_mood_tag("สวัสดี [mood:");
+        assert!(mood.is_none());
+        assert_eq!(text, "สวัสดี [mood:");
     }
 
     #[test]
-    fn parse_json_with_scene_update() {
-        let raw = r#"{"narrator_text":"N","character_text":"C","mood":"neutral","scene_update":{"location":"park","time":"evening","summary":"walked out"}}"#;
-        let result = parse_llm_response(raw).unwrap();
-        let su = result.scene_update.unwrap();
-        assert_eq!(su.location, Some("park".to_string()));
-        assert_eq!(su.time, Some("evening".to_string()));
-        assert_eq!(su.summary, Some("walked out".to_string()));
+    fn parse_blocks_unit_multiple_narration() {
+        let blocks = parse_text_into_blocks("*N1* D *N2* D2");
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0].block_type, BlockType::Narration);
+        assert_eq!(blocks[0].text, "N1");
+        assert_eq!(blocks[1].block_type, BlockType::Dialogue);
+        assert_eq!(blocks[1].text, "D");
+        assert_eq!(blocks[2].block_type, BlockType::Narration);
+        assert_eq!(blocks[2].text, "N2");
+        assert_eq!(blocks[3].block_type, BlockType::Dialogue);
+        assert_eq!(blocks[3].text, "D2");
     }
 
     #[test]
-    fn parse_blocks_with_scene_update() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"neutral","scene_update":{"location":"park","time":"evening","summary":"walked"}}"#;
-        let result = parse_llm_response(raw).unwrap();
-        let su = result.scene_update.unwrap();
-        assert_eq!(su.location, Some("park".to_string()));
-    }
-
-    // --- JSON repair tests ---
-
-    #[test]
-    fn repair_stray_paren_production_error() {
-        // Exact pattern from production: stray ) between closing " of text value and }
-        let raw = r#"{"blocks":[{"type":"narration","text":"เธอยิ้มให้"},{"type":"dialogue","text":"\"มาช่วยจัดการเรื่องของบัคด้วยนะ\""}],"mood":"playful","scene_update":null}"#;
-        // Insert stray ) between the closing " and the }
-        let broken = raw.replace(r#"\""}]"#, r#"\"")}]"#);
-        assert!(serde_json::from_str::<serde_json::Value>(&broken).is_err());
-        let result = parse_llm_response(&broken).unwrap();
-        assert_eq!(result.blocks.len(), 2);
-        assert_eq!(result.mood, Some("playful".to_string()));
-    }
-
-    #[test]
-    fn repair_trailing_comma_before_brace() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy",}"#;
-        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.mood, Some("happy".to_string()));
-    }
-
-    #[test]
-    fn repair_trailing_comma_before_bracket() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"},],"mood":"happy","scene_update":null}"#;
-        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
-    }
-
-    #[test]
-    fn repair_valid_json_unchanged() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null}"#;
-        let repaired = repair_json(raw);
-        assert_eq!(repaired, raw);
-    }
-
-    #[test]
-    fn repair_preserves_parens_inside_strings() {
-        let raw = r#"{"blocks":[{"type":"narration","text":"เธอยิ้ม (อย่างอ่อนโยน)"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null}"#;
-        let repaired = repair_json(raw);
-        assert_eq!(repaired, raw);
-        let result = parse_llm_response(raw).unwrap();
-        assert!(result.blocks[0].text.contains("(อย่างอ่อนโยน)"));
-    }
-
-    #[test]
-    fn repair_multiple_stray_chars() {
-        // Multiple stray parens outside strings
-        let raw = r#"({"blocks":[{"type":"narration","text":"N"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null})"#;
-        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
-    }
-
-    #[test]
-    fn repair_escaped_backslash_before_close_quote() {
-        // String value ends with literal backslash (\\), followed by stray ) outside
-        // The \\\\ in the raw string becomes \\ in the JSON string literal,
-        // which means the closing " is NOT escaped — repair must correctly
-        // identify the string boundary and remove the outer paren.
-        let raw = r#"{"blocks":[{"type":"narration","text":"hello\\"},{"type":"dialogue","text":"D"}],"mood":"happy","scene_update":null})"#;
-        assert!(serde_json::from_str::<serde_json::Value>(raw).is_err());
-        let result = parse_llm_response(raw).unwrap();
-        assert_eq!(result.blocks.len(), 2);
-        assert_eq!(result.blocks[0].text, "hello\\");
+    fn parse_blocks_unit_empty_segments_skipped() {
+        let blocks = parse_text_into_blocks("** สวัสดี **");
+        // empty narration segments are skipped, only dialogue remains
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].block_type, BlockType::Dialogue);
+        assert_eq!(blocks[0].text, "สวัสดี");
     }
 }
