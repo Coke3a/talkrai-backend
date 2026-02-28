@@ -1,9 +1,17 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use serde::Serialize;
 use serde_json::json;
+use utoipa::ToSchema;
 
 use crate::usecases::UsecaseError;
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ErrorResponse {
+    pub error: String,
+    pub message: String,
+}
 
 pub struct ApiError(pub UsecaseError);
 

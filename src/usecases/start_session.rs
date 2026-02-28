@@ -60,11 +60,16 @@ impl StartSessionUseCase {
             .await?
             .ok_or_else(|| UsecaseError::NotFound("User not found".into()))?;
 
-        // 2. Guard: user must have accepted terms
+        // 2. Auto-accept terms if not yet accepted
+        let mut user = user;
         if !user.has_accepted_terms() {
-            return Err(UsecaseError::Validation(
-                "User has not accepted terms".into(),
-            ));
+            user.accept_terms()
+                .map_err(|e| UsecaseError::Validation(format!("Failed to accept terms: {}", e)))?;
+            self.user_repo.update(&user).await?;
+            tracing::info!(
+                user_id = %user.id().as_uuid(),
+                "Auto-accepted terms during session start"
+            );
         }
 
         // 3. Fetch scene

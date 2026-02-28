@@ -50,10 +50,12 @@ pub struct ClaudeClient {
 
 impl ClaudeClient {
     pub fn new(api_key: String) -> Self {
-        Self {
-            http: Client::new(),
-            api_key,
-        }
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .expect("Failed to build Claude HTTP client");
+        Self { http, api_key }
     }
 }
 

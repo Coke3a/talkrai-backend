@@ -13,6 +13,7 @@ pub struct ServerConfig {
     pub port: u16,
     pub request_timeout_secs: u64,
     pub body_limit_bytes: usize,
+    pub enable_swagger: bool,
 }
 
 pub struct DatabaseConfig {
@@ -24,6 +25,7 @@ pub struct LineConfig {
     pub channel_secret: String,
     pub channel_access_token: String,
     pub liff_base_url: String,
+    pub rich_menu_0_id: String,
     pub rich_menu_a_id: String,
     pub rich_menu_b_id: String,
 }

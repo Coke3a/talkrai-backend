@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use serde::Deserialize;
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use crate::domain::entities::{CreditBalance, Job, User};
 use crate::domain::repositories::{
@@ -62,15 +61,6 @@ struct LineEventPostback {
     data: String,
 }
 
-pub struct ReceiveWebhookInput {
-    pub body: Vec<u8>,
-    pub signature: String,
-}
-
-pub struct ReceiveWebhookOutput {
-    pub job_ids: Vec<Uuid>,
-}
-
 pub struct ReceiveWebhookUseCase {
     line_client: Arc<dyn LineClient>,
     user_repo: Arc<dyn UserRepository>,
@@ -80,6 +70,7 @@ pub struct ReceiveWebhookUseCase {
     config_repo: Arc<dyn AppConfigRepository>,
     job_sender: mpsc::Sender<JobId>,
     liff_base_url: String,
+    rich_menu_0_id: String,
 }
 
 impl ReceiveWebhookUseCase {
@@ -93,6 +84,7 @@ impl ReceiveWebhookUseCase {
         config_repo: Arc<dyn AppConfigRepository>,
         job_sender: mpsc::Sender<JobId>,
         liff_base_url: String,
+        rich_menu_0_id: String,
     ) -> Self {
         Self {
             line_client,
@@ -103,6 +95,7 @@ impl ReceiveWebhookUseCase {
             config_repo,
             job_sender,
             liff_base_url,
+            rich_menu_0_id,
         }
     }
 
@@ -119,33 +112,28 @@ impl ReceiveWebhookUseCase {
         })
     }
 
-    pub async fn execute(
-        &self,
-        input: ReceiveWebhookInput,
-    ) -> Result<ReceiveWebhookOutput, UsecaseError> {
-        let valid = self
-            .line_client
-            .verify_signature(&input.body, &input.signature)?;
-        if !valid {
-            return Err(UsecaseError::Validation(
-                "Invalid webhook signature".to_string(),
-            ));
-        }
+    /// Verify the webhook signature (CPU-only, <1ms).
+    pub fn verify_signature(&self, body: &[u8], signature: &str) -> Result<bool, UsecaseError> {
+        self.line_client
+            .verify_signature(body, signature)
+            .map_err(UsecaseError::from)
+    }
 
-        let webhook_body: LineWebhookBody = serde_json::from_slice(&input.body)
-            .map_err(|e| UsecaseError::Validation(e.to_string()))?;
-
-        let mut job_ids = Vec::new();
+    /// Deserialize and process all events from a verified webhook body.
+    /// Intended to be called from a `tokio::spawn` background task.
+    pub async fn process_events(&self, body: Vec<u8>) -> Result<(), UsecaseError> {
+        let webhook_body: LineWebhookBody =
+            serde_json::from_slice(&body).map_err(|e| UsecaseError::Validation(e.to_string()))?;
 
         for event in &webhook_body.events {
             match self.route_event(event).await {
-                Ok(Some(job_id)) => job_ids.push(*job_id.as_uuid()),
+                Ok(Some(_job_id)) => {}
                 Ok(None) => {}
                 Err(e) => tracing::error!(error = %e, "Failed to process webhook event"),
             }
         }
 
-        Ok(ReceiveWebhookOutput { job_ids })
+        Ok(())
     }
 
     async fn route_event(&self, event: &LineEvent) -> Result<Option<JobId>, UsecaseError> {
@@ -198,9 +186,9 @@ impl ReceiveWebhookUseCase {
                         line_user_id = line_user_id,
                         "User has not accepted terms, sending registration Flex Message"
                     );
-                    let onboarding_url = format!("{}/onboarding", self.liff_base_url);
+                    let scenes_url = format!("{}/scenes", self.liff_base_url);
                     let flex_contents =
-                        flex_messages::build_registration_required_flex(&onboarding_url);
+                        flex_messages::build_registration_required_flex(&scenes_url);
                     let messages = vec![LineReplyMessage::Flex {
                         alt_text: "กรุณาลงทะเบียนก่อนใช้งาน".to_string(),
                         contents: flex_contents,
@@ -292,9 +280,9 @@ impl ReceiveWebhookUseCase {
 
         let user = self.sync_user_from_line(line_user_id).await?;
 
-        // Build welcome Flex Message with CTA button → LIFF /onboarding
-        let onboarding_url = format!("{}/onboarding", self.liff_base_url);
-        let flex_contents = flex_messages::build_welcome_flex(&onboarding_url);
+        // Build welcome Flex Message with CTA button → LIFF /scenes
+        let scenes_url = format!("{}/scenes", self.liff_base_url);
+        let flex_contents = flex_messages::build_welcome_flex(&scenes_url);
         let messages = vec![LineReplyMessage::Flex {
             alt_text: "ยินดีต้อนรับ! กดปุ่มเพื่อเริ่มใช้งาน".to_string(),
             contents: flex_contents,
@@ -309,11 +297,24 @@ impl ReceiveWebhookUseCase {
             );
         }
 
+        // Assign Rich Menu State 0 (best-effort)
+        if let Err(e) = self
+            .line_client
+            .link_rich_menu(line_user_id, &self.rich_menu_0_id)
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                line_user_id = line_user_id,
+                "Failed to link Rich Menu State 0 after follow"
+            );
+        }
+
         tracing::info!(
             user_id = %user.id().as_uuid(),
             line_user_id = line_user_id,
             is_unblocked = is_unblocked,
-            "Follow event handled successfully — welcome Flex Message sent"
+            "Follow event handled successfully — welcome Flex Message sent, Rich Menu 0 linked"
         );
 
         Ok(None)
@@ -406,34 +407,30 @@ impl ReceiveWebhookUseCase {
     }
 
     async fn sync_user_from_line(&self, line_user_id: &str) -> Result<User, UsecaseError> {
-        let profile = self.line_client.get_profile(line_user_id).await?;
-
-        match self.user_repo.find_by_line_user_id(line_user_id).await? {
-            Some(mut user) => {
-                user.update_profile(profile.display_name, profile.picture_url);
-                self.user_repo.upsert(&user).await?;
-                Ok(user)
-            }
-            None => {
-                let user = User::new(
-                    line_user_id.to_string(),
-                    profile.display_name,
-                    profile.picture_url,
-                );
-                self.user_repo.upsert(&user).await?;
-
-                let welcome_credits = self.resolve_welcome_credits().await?;
-                let balance = CreditBalance::new(user.id().clone(), welcome_credits);
-                self.credit_repo.create_balance(&balance).await?;
-
-                tracing::info!(
-                    user_id = %user.id().as_uuid(),
-                    "New user created with {} welcome credits",
-                    welcome_credits
-                );
-
-                Ok(user)
-            }
+        // Fast path: known user → return from DB immediately, skip LINE API
+        if let Some(user) = self.user_repo.find_by_line_user_id(line_user_id).await? {
+            return Ok(user);
         }
+
+        // Slow path: new user → call LINE Profile API
+        let profile = self.line_client.get_profile(line_user_id).await?;
+        let user = User::new(
+            line_user_id.to_string(),
+            profile.display_name,
+            profile.picture_url,
+        );
+        self.user_repo.upsert(&user).await?;
+
+        let welcome_credits = self.resolve_welcome_credits().await?;
+        let balance = CreditBalance::new(user.id().clone(), welcome_credits);
+        self.credit_repo.create_balance(&balance).await?;
+
+        tracing::info!(
+            user_id = %user.id().as_uuid(),
+            "New user created with {} welcome credits",
+            welcome_credits
+        );
+
+        Ok(user)
     }
 }

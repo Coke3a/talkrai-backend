@@ -1,4 +1,3 @@
-pub mod accept_terms;
 pub mod background;
 pub mod end_session;
 pub mod error;

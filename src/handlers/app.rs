@@ -24,9 +24,12 @@ use crate::domain::repositories::{
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
 use crate::domain::value_objects::JobId;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+use crate::handlers::openapi::ApiDoc;
 use crate::handlers::routers::{health_check, liff_api, ready_check, webhook};
 use crate::infra::db::postgres_connection::PgPool;
-use crate::usecases::accept_terms::AcceptTermsUseCase;
 use crate::usecases::background::{JobPollerUseCase, StaleJobCleanupUseCase};
 use crate::usecases::end_session::EndSessionUseCase;
 use crate::usecases::process_roleplay_message::ProcessRoleplayMessageUseCase;
@@ -41,7 +44,6 @@ pub struct AppState {
     pub line_client: Arc<dyn LineClient>,
     pub ai_client: Arc<dyn AiClient>,
     pub webhook_usecase: Arc<ReceiveWebhookUseCase>,
-    pub accept_terms_usecase: Arc<AcceptTermsUseCase>,
     pub start_session_usecase: Arc<StartSessionUseCase>,
     pub end_session_usecase: Arc<EndSessionUseCase>,
 }
@@ -69,11 +71,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&config_repo),
         job_sender.clone(),
         config.line.liff_base_url.clone(),
-    ));
-
-    let accept_terms_usecase = Arc::new(AcceptTermsUseCase::new(
-        Arc::clone(&repos.user_repo),
-        Arc::clone(&line_client),
+        config.line.rich_menu_0_id.clone(),
     ));
 
     let start_session_usecase = Arc::new(StartSessionUseCase::new(
@@ -98,7 +96,6 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         line_client: Arc::clone(&line_client),
         ai_client: Arc::clone(&ai_client),
         webhook_usecase,
-        accept_terms_usecase,
         start_session_usecase,
         end_session_usecase,
     };
@@ -157,13 +154,20 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
             Duration::from_secs(config.server.request_timeout_secs),
         ));
 
-    Router::new()
+    let router = Router::new()
         .route("/webhook", post(webhook::webhook_handler))
         .nest("/api", liff_api::router())
         .route("/health-check", get(health_check::health_check_handler))
-        .route("/ready-check", get(ready_check::ready_check_handler))
-        .layer(middleware)
-        .with_state(state)
+        .route("/ready-check", get(ready_check::ready_check_handler));
+
+    let router = if config.server.enable_swagger {
+        tracing::info!("Swagger UI enabled at /swagger-ui/");
+        router.merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+    } else {
+        router
+    };
+
+    router.layer(middleware).with_state(state)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -274,8 +278,8 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CharacterPostgres, CreditPostgres, JobPostgres, MessagePostgres,
-        RoleplaySessionPostgres, ScenePostgres, UserPostgres,
+        AppConfigPostgres, CachedAppConfigRepository, CharacterPostgres, CreditPostgres,
+        JobPostgres, MessagePostgres, RoleplaySessionPostgres, ScenePostgres, UserPostgres,
     };
 
     let repos = Repositories {
@@ -293,8 +297,10 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         config.line.channel_access_token.clone(),
     ));
 
-    let config_repo: Arc<dyn crate::domain::repositories::AppConfigRepository> =
+    let config_repo_raw: Arc<dyn crate::domain::repositories::AppConfigRepository> =
         Arc::new(AppConfigPostgres::new(Arc::clone(db_pool)));
+    let config_repo: Arc<dyn crate::domain::repositories::AppConfigRepository> =
+        Arc::new(CachedAppConfigRepository::new(config_repo_raw));
 
     let claude: Arc<dyn AiClient> = Arc::new(ClaudeClient::new(config.ai.claude_api_key.clone()));
     let openai: Arc<dyn AiClient> = Arc::new(OpenAiClient::new(config.ai.openai_api_key.clone()));

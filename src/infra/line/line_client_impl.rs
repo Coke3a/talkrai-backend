@@ -130,8 +130,13 @@ pub struct LineClientImpl {
 
 impl LineClientImpl {
     pub fn new(channel_secret: String, channel_access_token: String) -> Self {
+        let http = Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("Failed to build LINE HTTP client");
         Self {
-            http: Client::new(),
+            http,
             channel_secret,
             channel_access_token,
         }

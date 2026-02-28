@@ -9,6 +9,8 @@ use crate::domain::services::ai_client::{
 use crate::domain::services::AiClientError;
 
 const ACTIVE_LLM_PROVIDER_KEY: &str = "active_llm_provider";
+const RETRY_DELAY_MS: u64 = 1000;
+const MAX_RETRIES: usize = 2;
 
 pub struct LlmRouter {
     claude: Arc<dyn AiClient>,
@@ -87,13 +89,69 @@ impl AiClient for LlmRouter {
         let provider = self.resolve_provider().await;
         tracing::debug!(provider = %provider, "Routing LLM request");
         let client = self.get_client(&provider);
-        client.generate_roleplay_response(request).await
+
+        let max_attempts = 1 + MAX_RETRIES;
+        let mut last_err: Option<AiClientError> = None;
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+            }
+
+            match client.generate_roleplay_response(request.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    if !e.is_retryable() || attempt + 1 == max_attempts {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        error = %e,
+                        attempt = attempt + 1,
+                        provider = %provider,
+                        "LLM roleplay request failed (transient), will retry"
+                    );
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            AiClientError::NetworkError(anyhow::anyhow!("roleplay: all retries exhausted"))
+        }))
     }
 
     async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError> {
         let provider = self.resolve_provider().await;
         tracing::debug!(provider = %provider, "Routing summary request");
         let client = self.get_client(&provider);
-        client.generate_summary(request).await
+
+        let max_attempts = 1 + MAX_RETRIES;
+        let mut last_err: Option<AiClientError> = None;
+
+        for attempt in 0..max_attempts {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+            }
+
+            match client.generate_summary(request.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(e) => {
+                    if !e.is_retryable() || attempt + 1 == max_attempts {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        error = %e,
+                        attempt = attempt + 1,
+                        provider = %provider,
+                        "LLM summary request failed (transient), will retry"
+                    );
+                    last_err = Some(e);
+                }
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| {
+            AiClientError::NetworkError(anyhow::anyhow!("summary: all retries exhausted"))
+        }))
     }
 }

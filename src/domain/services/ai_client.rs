@@ -14,12 +14,14 @@ pub trait AiClient: Send + Sync {
     async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError>;
 }
 
+#[derive(Clone)]
 pub struct AiRoleplayRequest {
     pub system_prompt: String,
     pub messages: Vec<AiMessage>,
     pub max_tokens: u32,
 }
 
+#[derive(Clone)]
 pub struct AiMessage {
     pub role: String,
     pub content: String,
@@ -56,6 +58,7 @@ impl AiRoleplayResponse {
     }
 }
 
+#[derive(Clone)]
 pub struct AiSummaryRequest {
     pub existing_summary: Option<String>,
     pub messages_to_summarize: Vec<AiMessage>,

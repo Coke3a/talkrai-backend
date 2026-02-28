@@ -10,7 +10,9 @@ use crate::domain::services::ai_client::{
     AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
-use crate::domain::value_objects::{CharacterMood, JobId, MessageRole, RelationshipThresholds};
+use crate::domain::value_objects::{
+    CharacterMood, JobId, MessageRole, RelationshipThresholds, SessionId,
+};
 use crate::infra::line::{flex_messages, roleplay_flex};
 use crate::usecases::UsecaseError;
 
@@ -391,22 +393,30 @@ impl ProcessRoleplayMessageUseCase {
         match self.process_job(&mut job).await {
             Ok(()) => Ok(()),
             Err(e) => {
-                if matches!(e, UsecaseError::InsufficientCredits) {
-                    let credits_url = format!("{}/credits", self.liff_base_url);
-                    let bubble = flex_messages::build_insufficient_credits_flex(&credits_url);
-                    let messages = vec![LineMessage::Flex {
-                        alt_text: "เครดิตหมดแล้ว กดเพื่อเติมเครดิต".into(),
-                        contents: bubble,
-                        sender_name: "TalkRai".into(),
-                        sender_icon_url: String::new(),
-                    }];
-                    if let Err(push_err) = self
-                        .line_client
-                        .push_messages(job.line_user_id(), messages)
-                        .await
-                    {
-                        tracing::warn!(error = %push_err, "Failed to push insufficient credits notification");
-                    }
+                let error_messages: Vec<LineMessage> =
+                    if matches!(e, UsecaseError::InsufficientCredits) {
+                        let credits_url = format!("{}/credits", self.liff_base_url);
+                        let bubble = flex_messages::build_insufficient_credits_flex(&credits_url);
+                        vec![LineMessage::Flex {
+                            alt_text: "เครดิตหมดแล้ว กดเพื่อเติมเครดิต".into(),
+                            contents: bubble,
+                            sender_name: "TalkRai".into(),
+                            sender_icon_url: String::new(),
+                        }]
+                    } else {
+                        vec![LineMessage::Text {
+                            text: "ขอโทษนะคะ ระบบขัดข้องชั่วคราว ลองส่งข้อความมาใหม่อีกครั้งนะคะ 🙏".into(),
+                            sender_name: "TalkRai".into(),
+                            sender_icon_url: String::new(),
+                        }]
+                    };
+
+                if let Err(push_err) = self
+                    .line_client
+                    .push_messages(job.line_user_id(), error_messages)
+                    .await
+                {
+                    tracing::warn!(error = %push_err, "Failed to push error notification to user");
                 }
 
                 tracing::error!(job_id = %job.id().as_uuid(), error = %e, "Job processing failed");
@@ -430,8 +440,8 @@ impl ProcessRoleplayMessageUseCase {
             .await?
             .ok_or_else(|| UsecaseError::NotFound("Session not found".into()))?;
 
-        // Parallel fetch: character, scene, messages (all depend on session but not each other)
-        let (character_opt, scene_opt, recent_messages) = tokio::try_join!(
+        // Parallel fetch: character, scene, messages, credits, config
+        let (character_opt, scene_opt, recent_messages, credit_balance_opt, cfg) = tokio::try_join!(
             async {
                 self.character_repo
                     .find_by_id(session.character_id())
@@ -450,6 +460,13 @@ impl ProcessRoleplayMessageUseCase {
                     .await
                     .map_err(UsecaseError::from)
             },
+            async {
+                self.credit_repo
+                    .find_balance_by_user_id(session.user_id())
+                    .await
+                    .map_err(UsecaseError::from)
+            },
+            self.resolve_config(),
         )?;
 
         let character =
@@ -457,18 +474,12 @@ impl ProcessRoleplayMessageUseCase {
         let scene = scene_opt.ok_or_else(|| UsecaseError::NotFound("Scene not found".into()))?;
 
         // 3. Check credits
-        let credit_balance = self
-            .credit_repo
-            .find_balance_by_user_id(session.user_id())
-            .await?
+        let credit_balance = credit_balance_opt
             .ok_or_else(|| UsecaseError::NotFound("Credit balance not found".into()))?;
 
-        if !credit_balance.has_sufficient_credits(1) {
+        if !credit_balance.has_sufficient_credits(2) {
             return Err(UsecaseError::InsufficientCredits);
         }
-
-        // 4. Resolve config from DB
-        let cfg = self.resolve_config().await?;
 
         // 5. Build prompt (call free functions)
         let system_prompt = build_system_prompt(&character, &scene, &session);
@@ -503,9 +514,9 @@ impl ProcessRoleplayMessageUseCase {
 
         // 8. Deduct credit
         let mut balance = credit_balance;
-        let transaction = balance.deduct(1, Some(*job.id().as_uuid()))?;
+        let transaction = balance.deduct(2, Some(*job.id().as_uuid()))?;
         self.credit_repo
-            .deduct_and_log(session.user_id(), 1, &transaction)
+            .deduct_and_log(session.user_id(), 2, &transaction)
             .await?;
 
         // 9. Update session
@@ -565,102 +576,112 @@ impl ProcessRoleplayMessageUseCase {
             "Roleplay message processed"
         );
 
-        // 12. Background summarization (best-effort, after user gets response)
+        // 12. Fire-and-forget summarization (non-blocking)
         if let Some(interval) = cfg.summarize_interval.filter(|&v| v > 0) {
-            self.maybe_summarize(&session, interval).await;
+            let message_count = session.message_count() as u32;
+            if message_count.is_multiple_of(interval) && message_count * 3 > 20 {
+                let session_id = session.id().clone();
+                let scene_summary = session.scene_summary().map(|s| s.to_string());
+                let message_repo = Arc::clone(&self.message_repo);
+                let session_repo = Arc::clone(&self.session_repo);
+                let ai_client = Arc::clone(&self.ai_client);
+                tokio::spawn(async move {
+                    run_summarization(
+                        session_id,
+                        scene_summary,
+                        message_repo,
+                        session_repo,
+                        ai_client,
+                    )
+                    .await;
+                });
+            }
         }
 
         Ok(())
     }
+}
 
-    /// Best-effort summarization of messages that are about to fall off the context window.
-    async fn maybe_summarize(&self, session: &RoleplaySession, summarize_interval: u32) {
-        let message_count = session.message_count() as u32;
+/// Standalone async function for fire-and-forget summarization.
+async fn run_summarization(
+    session_id: SessionId,
+    existing_summary: Option<String>,
+    message_repo: Arc<dyn MessageRepository>,
+    session_repo: Arc<dyn RoleplaySessionRepository>,
+    ai_client: Arc<dyn AiClient>,
+) {
+    tracing::info!(
+        session_id = %session_id.as_uuid(),
+        "Triggering conversation summarization"
+    );
 
-        // Only trigger at interval boundaries
-        if !message_count.is_multiple_of(summarize_interval) {
+    // Fetch 40 most recent messages
+    let all_messages = match message_repo.find_by_session_id(&session_id, 40).await {
+        Ok(msgs) => msgs,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to fetch messages for summarization");
             return;
         }
+    };
 
-        // No point summarizing if we haven't exceeded the context window yet
-        if message_count * 3 <= 20 {
+    if all_messages.len() <= 20 {
+        return;
+    }
+
+    // Messages that are "falling off" — older ones not in the recent 20
+    let falling_off = &all_messages[..all_messages.len() - 20];
+
+    // Convert to AiMessage format
+    let ai_messages: Vec<AiMessage> = falling_off
+        .iter()
+        .map(|m| AiMessage {
+            role: match m.role() {
+                MessageRole::User => "user".to_string(),
+                MessageRole::Character => "assistant".to_string(),
+            },
+            content: match m.role() {
+                MessageRole::User => m.content().to_string(),
+                MessageRole::Character => wrap_character_content(m.content()),
+            },
+        })
+        .collect();
+
+    let summary_request = AiSummaryRequest {
+        existing_summary,
+        messages_to_summarize: ai_messages,
+        max_tokens: 300,
+    };
+
+    let new_summary = match ai_client.generate_summary(summary_request).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to generate summary");
             return;
         }
+    };
 
+    // Re-fetch session to avoid stale data
+    let mut fresh_session = match session_repo.find_by_id(&session_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            tracing::warn!("Session not found during summarization");
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to re-fetch session for summarization");
+            return;
+        }
+    };
+
+    fresh_session.update_scene_summary(new_summary);
+
+    if let Err(e) = session_repo.update(&fresh_session).await {
+        tracing::warn!(error = %e, "Failed to save summary to session");
+    } else {
         tracing::info!(
-            session_id = %session.id().as_uuid(),
-            message_count = message_count,
-            "Triggering conversation summarization"
+            session_id = %session_id.as_uuid(),
+            "Conversation summary updated"
         );
-
-        // Fetch 40 most recent messages
-        let all_messages = match self.message_repo.find_by_session_id(session.id(), 40).await {
-            Ok(msgs) => msgs,
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to fetch messages for summarization");
-                return;
-            }
-        };
-
-        if all_messages.len() <= 20 {
-            return;
-        }
-
-        // Messages that are "falling off" — older ones not in the recent 20
-        let falling_off = &all_messages[..all_messages.len() - 20];
-
-        // Convert to AiMessage format
-        let ai_messages: Vec<AiMessage> = falling_off
-            .iter()
-            .map(|m| AiMessage {
-                role: match m.role() {
-                    MessageRole::User => "user".to_string(),
-                    MessageRole::Character => "assistant".to_string(),
-                },
-                content: match m.role() {
-                    MessageRole::User => m.content().to_string(),
-                    MessageRole::Character => wrap_character_content(m.content()),
-                },
-            })
-            .collect();
-
-        let summary_request = AiSummaryRequest {
-            existing_summary: session.scene_summary().map(|s| s.to_string()),
-            messages_to_summarize: ai_messages,
-            max_tokens: 300,
-        };
-
-        let new_summary = match self.ai_client.generate_summary(summary_request).await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to generate summary");
-                return;
-            }
-        };
-
-        // Re-fetch session to avoid stale data
-        let mut fresh_session = match self.session_repo.find_by_id(session.id()).await {
-            Ok(Some(s)) => s,
-            Ok(None) => {
-                tracing::warn!("Session not found during summarization");
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to re-fetch session for summarization");
-                return;
-            }
-        };
-
-        fresh_session.update_scene_summary(new_summary);
-
-        if let Err(e) = self.session_repo.update(&fresh_session).await {
-            tracing::warn!(error = %e, "Failed to save summary to session");
-        } else {
-            tracing::info!(
-                session_id = %session.id().as_uuid(),
-                "Conversation summary updated"
-            );
-        }
     }
 }
 
