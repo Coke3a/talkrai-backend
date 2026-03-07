@@ -17,6 +17,7 @@ const LINE_API_REPLY: &str = "https://api.line.me/v2/bot/message/reply";
 const LINE_API_LOADING: &str = "https://api.line.me/v2/bot/chat/loading/start";
 const LINE_API_PROFILE: &str = "https://api.line.me/v2/bot/profile";
 const LINE_API_USER_PROFILE: &str = "https://api.line.me/v2/profile";
+const LINE_API_TOKEN_VERIFY: &str = "https://api.line.me/oauth2/v2.1/verify";
 
 /// Retry delays for transient errors (408, 429, 500).
 const RETRY_DELAYS_MS: &[u64] = &[500, 1500];
@@ -110,6 +111,13 @@ struct LoadingAnimationRequest {
 }
 
 #[derive(Deserialize)]
+struct TokenVerifyResponse {
+    client_id: String,
+    #[allow(dead_code)]
+    expires_in: i64,
+}
+
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProfileResponse {
     user_id: String,
@@ -126,10 +134,11 @@ pub struct LineClientImpl {
     http: Client,
     channel_secret: String,
     channel_access_token: String,
+    line_channel_id: String,
 }
 
 impl LineClientImpl {
-    pub fn new(channel_secret: String, channel_access_token: String) -> Self {
+    pub fn new(channel_secret: String, channel_access_token: String, line_channel_id: String) -> Self {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -139,6 +148,7 @@ impl LineClientImpl {
             http,
             channel_secret,
             channel_access_token,
+            line_channel_id,
         }
     }
 
@@ -327,6 +337,37 @@ impl LineClient for LineClientImpl {
     }
 
     async fn verify_liff_token(&self, access_token: &str) -> Result<LineProfile, LineClientError> {
+        // Step 1: Verify token validity and check client_id
+        let verify_url = format!("{}?access_token={}", LINE_API_TOKEN_VERIFY, access_token);
+        let verify_resp = self
+            .http
+            .get(&verify_url)
+            .send()
+            .await
+            .map_err(|e| LineClientError::NetworkError(e.into()))?;
+
+        if !verify_resp.status().is_success() {
+            let status = verify_resp.status().as_u16();
+            let message = verify_resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "Failed to read error body".into());
+            return Err(LineClientError::ApiError { status, message });
+        }
+
+        let verify_body: TokenVerifyResponse = verify_resp
+            .json()
+            .await
+            .map_err(|e| LineClientError::NetworkError(e.into()))?;
+
+        if verify_body.client_id != self.line_channel_id {
+            return Err(LineClientError::ApiError {
+                status: 401,
+                message: "Token does not belong to this LIFF channel".into(),
+            });
+        }
+
+        // Step 2: Get user profile
         let response = self
             .http
             .get(LINE_API_USER_PROFILE)

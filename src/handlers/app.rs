@@ -295,6 +295,7 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     let line_client: Arc<dyn LineClient> = Arc::new(crate::infra::line::LineClientImpl::new(
         config.line.channel_secret.clone(),
         config.line.channel_access_token.clone(),
+        config.line.line_channel_id.clone(),
     ));
 
     let config_repo_raw: Arc<dyn crate::domain::repositories::AppConfigRepository> =
