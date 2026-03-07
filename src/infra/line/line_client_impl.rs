@@ -138,7 +138,11 @@ pub struct LineClientImpl {
 }
 
 impl LineClientImpl {
-    pub fn new(channel_secret: String, channel_access_token: String, line_channel_id: String) -> Self {
+    pub fn new(
+        channel_secret: String,
+        channel_access_token: String,
+        line_channel_id: String,
+    ) -> Self {
         let http = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
