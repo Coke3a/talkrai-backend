@@ -7,7 +7,12 @@ use crate::domain::services::ai_client::{
 };
 use crate::domain::services::AiClientError;
 
-use super::response::{build_summary_system_prompt, parse_llm_response};
+use serde_json::Value;
+
+use super::response::{
+    build_summary_system_prompt, openai_tool_definition, parse_llm_response, tool_args_to_response,
+    UpdateSceneStateArgs,
+};
 
 const VENICE_API_URL: &str = "https://api.venice.ai/api/v1/chat/completions";
 const VENICE_MODEL: &str = "venice-uncensored";
@@ -19,6 +24,10 @@ struct VeniceRequest {
     model: &'static str,
     max_tokens: u32,
     messages: Vec<VeniceMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -42,6 +51,18 @@ struct VeniceChoice {
 #[derive(Deserialize)]
 struct VeniceChoiceMessage {
     content: Option<String>,
+    tool_calls: Option<Vec<VeniceToolCall>>,
+}
+
+#[derive(Deserialize)]
+struct VeniceToolCall {
+    function: VeniceToolCallFunction,
+}
+
+#[derive(Deserialize)]
+struct VeniceToolCallFunction {
+    name: String,
+    arguments: String,
 }
 
 pub struct VeniceClient {
@@ -86,6 +107,8 @@ impl AiClient for VeniceClient {
             model: VENICE_MODEL,
             max_tokens: request.max_tokens,
             messages,
+            tools: Some(vec![openai_tool_definition()]),
+            tool_choice: Some(serde_json::json!("required")),
         };
 
         tracing::debug!(
@@ -134,6 +157,27 @@ impl AiClient for VeniceClient {
             AiClientError::ParseError(format!("Failed to deserialize Venice response: {e}"))
         })?;
 
+        // Try tool call first
+        if let Some(choice) = venice_resp.choices.first() {
+            if let Some(tool_calls) = &choice.message.tool_calls {
+                if let Some(tc) = tool_calls
+                    .iter()
+                    .find(|tc| tc.function.name == "update_scene_state")
+                {
+                    let args: UpdateSceneStateArgs = serde_json::from_str(&tc.function.arguments)
+                        .map_err(|e| {
+                        AiClientError::ParseError(format!("Failed to deserialize tool args: {e}"))
+                    })?;
+                    return Ok(tool_args_to_response(args));
+                }
+            }
+        }
+
+        // Fallback: text content
+        tracing::warn!(
+            provider = "venice",
+            "No tool call found, falling back to text parsing"
+        );
         let text = venice_resp
             .choices
             .first()
@@ -162,6 +206,8 @@ impl AiClient for VeniceClient {
             model: VENICE_MODEL,
             max_tokens: request.max_tokens,
             messages,
+            tools: None,
+            tool_choice: None,
         };
 
         tracing::debug!(

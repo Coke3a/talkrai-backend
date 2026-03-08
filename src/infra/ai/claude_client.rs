@@ -7,7 +7,12 @@ use crate::domain::services::ai_client::{
 };
 use crate::domain::services::AiClientError;
 
-use super::response::{build_summary_system_prompt, parse_llm_response};
+use serde_json::Value;
+
+use super::response::{
+    build_summary_system_prompt, claude_tool_definition, parse_llm_response, tool_args_to_response,
+    UpdateSceneStateArgs,
+};
 
 const CLAUDE_API_URL: &str = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MODEL: &str = "claude-sonnet-4-5-20250929";
@@ -21,6 +26,10 @@ struct ClaudeRequest {
     max_tokens: u32,
     system: String,
     messages: Vec<ClaudeMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
 }
 
 #[derive(Serialize)]
@@ -41,6 +50,8 @@ struct ClaudeContentBlock {
     #[serde(rename = "type")]
     block_type: String,
     text: Option<String>,
+    name: Option<String>,
+    input: Option<Value>,
 }
 
 pub struct ClaudeClient {
@@ -78,6 +89,8 @@ impl AiClient for ClaudeClient {
                     content: m.content,
                 })
                 .collect(),
+            tools: Some(vec![claude_tool_definition()]),
+            tool_choice: Some(serde_json::json!({"type": "any"})),
         };
 
         tracing::debug!(
@@ -127,6 +140,26 @@ impl AiClient for ClaudeClient {
             AiClientError::ParseError(format!("Failed to deserialize Claude response: {e}"))
         })?;
 
+        // Try tool_use block first
+        if let Some(tool_block) = claude_resp
+            .content
+            .iter()
+            .find(|b| b.block_type == "tool_use" && b.name.as_deref() == Some("update_scene_state"))
+        {
+            if let Some(input) = &tool_block.input {
+                let args: UpdateSceneStateArgs =
+                    serde_json::from_value(input.clone()).map_err(|e| {
+                        AiClientError::ParseError(format!("Failed to deserialize tool args: {e}"))
+                    })?;
+                return Ok(tool_args_to_response(args));
+            }
+        }
+
+        // Fallback: text block
+        tracing::warn!(
+            provider = "claude",
+            "No tool_use block found, falling back to text parsing"
+        );
         let text = claude_resp
             .content
             .iter()
@@ -152,6 +185,8 @@ impl AiClient for ClaudeClient {
                     content: m.content,
                 })
                 .collect(),
+            tools: None,
+            tool_choice: None,
         };
 
         tracing::debug!(

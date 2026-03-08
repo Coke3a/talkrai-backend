@@ -9,6 +9,7 @@ use crate::domain::repositories::{
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
+use crate::infra::line::flex_messages;
 use crate::usecases::UsecaseError;
 
 pub struct StartSessionInput {
@@ -130,7 +131,34 @@ impl StartSessionUseCase {
             .create_many(&[narrator_message, dialogue_message])
             .await?;
 
-        // 8. Push opening messages to LINE
+        // 8a. Push session started notification (best-effort)
+        let session_flex = flex_messages::build_session_started_flex(
+            character.name().as_str(),
+            scene.name().as_str(),
+            character.avatar_url(),
+        );
+
+        if let Err(e) = self
+            .line_client
+            .push_messages(
+                &input.line_user_id,
+                vec![LineMessage::Flex {
+                    alt_text: format!("เรื่องราวเริ่มต้นแล้ว - {}", scene.name().as_str()),
+                    contents: session_flex,
+                    sender_name: "TalkRai".into(),
+                    sender_icon_url: String::new(),
+                }],
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                line_user_id = %input.line_user_id,
+                "Failed to push session started notification"
+            );
+        }
+
+        // 8b. Push opening messages to LINE
         let narrator_sender_name = "ผู้บรรยาย".to_string();
         let narrator_sender_icon = String::new();
         let character_sender_name = character.name().as_str().to_string();

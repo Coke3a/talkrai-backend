@@ -2,13 +2,17 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use crate::domain::repositories::{RoleplaySessionRepository, UserRepository};
-use crate::domain::services::line_client::LineClient;
+use crate::domain::repositories::{
+    CharacterRepository, RoleplaySessionRepository, SceneRepository, UserRepository,
+};
+use crate::domain::services::line_client::{LineClient, LineMessage};
+use crate::infra::line::flex_messages;
 use crate::usecases::UsecaseError;
 
 pub struct EndSessionInput {
     pub line_user_id: String,
     pub rich_menu_a_id: String,
+    pub liff_base_url: String,
 }
 
 pub struct EndSessionOutput {
@@ -18,6 +22,8 @@ pub struct EndSessionOutput {
 pub struct EndSessionUseCase {
     user_repo: Arc<dyn UserRepository>,
     session_repo: Arc<dyn RoleplaySessionRepository>,
+    scene_repo: Arc<dyn SceneRepository>,
+    character_repo: Arc<dyn CharacterRepository>,
     line_client: Arc<dyn LineClient>,
 }
 
@@ -25,11 +31,15 @@ impl EndSessionUseCase {
     pub fn new(
         user_repo: Arc<dyn UserRepository>,
         session_repo: Arc<dyn RoleplaySessionRepository>,
+        scene_repo: Arc<dyn SceneRepository>,
+        character_repo: Arc<dyn CharacterRepository>,
         line_client: Arc<dyn LineClient>,
     ) -> Self {
         Self {
             user_repo,
             session_repo,
+            scene_repo,
+            character_repo,
             line_client,
         }
     }
@@ -53,7 +63,57 @@ impl EndSessionUseCase {
         session.end()?;
         self.session_repo.update(&session).await?;
 
-        // 4. Switch rich menu back to A (best-effort)
+        // 4. Fetch character + scene for Flex notification (best-effort)
+        let flex_result: Option<serde_json::Value> = async {
+            let character = self
+                .character_repo
+                .find_by_id(session.character_id())
+                .await
+                .ok()??;
+            let scene = self
+                .scene_repo
+                .find_by_id(session.scene_id())
+                .await
+                .ok()??;
+            let scenes_url = format!("{}/scenes", input.liff_base_url);
+            Some(flex_messages::build_session_ended_flex(
+                character.name().as_str(),
+                scene.name().as_str(),
+                session.message_count(),
+                &scenes_url,
+            ))
+        }
+        .await;
+
+        // 5. Push "Session Ended" Flex (best-effort)
+        if let Some(flex_contents) = flex_result {
+            if let Err(e) = self
+                .line_client
+                .push_messages(
+                    &input.line_user_id,
+                    vec![LineMessage::Flex {
+                        alt_text: "เรื่องราวจบลงแล้ว".into(),
+                        contents: flex_contents,
+                        sender_name: "TalkRai".into(),
+                        sender_icon_url: String::new(),
+                    }],
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    line_user_id = %input.line_user_id,
+                    "Failed to push session ended flex"
+                );
+            }
+        } else {
+            tracing::warn!(
+                line_user_id = %input.line_user_id,
+                "Could not fetch character/scene for session ended flex, skipping"
+            );
+        }
+
+        // 6. Switch rich menu back to A (best-effort)
         if let Err(e) = self
             .line_client
             .link_rich_menu(&input.line_user_id, &input.rich_menu_a_id)

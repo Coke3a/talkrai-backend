@@ -150,24 +150,27 @@ pub fn build_system_prompt(
 - user ยาว (5+ ประโยค) → 150-300 คำ | ฉากเข้มข้นอาจถึง 350
 
 ## Response Format
-ตอบเป็นข้อความปกติ ห้ามใช้ JSON
-- ครอบบรรยาย/การกระทำด้วย *...* เช่น *เธอยิ้ม*
-- ข้อความนอก *...* คือคำพูดของตัวละคร
-- ห้ามใช้ * ภายในคำพูด
-- เริ่มด้วย *บรรยาย* เสมอ
-- สลับบรรยายกับคำพูดอิสระ ไม่ต้องสลับ N→D→N→D ทุกครั้ง
-- ท้ายสุดใส่ [mood:VALUE] เสมอ
-- mood: neutral|happy|sad|excited|angry|shy|playful|serious|worried
+คุณต้องเรียก tool `update_scene_state` ทุกครั้ง โดยใส่ข้อมูลครบทุก field:
+- `content`: ข้อความตอบกลับ ครอบบรรยาย/การกระทำด้วย *...* เช่น *เธอยิ้ม* ข้อความนอก *...* คือคำพูดของตัวละคร ห้ามใช้ * ภายในคำพูด เริ่มด้วย *บรรยาย* เสมอ สลับบรรยายกับคำพูดอิสระ
+- `current_location`: สถานที่ปัจจุบันของฉาก (ภาษาไทย)
+- `scene_time`: ช่วงเวลา (เช้า/สาย/เที่ยง/บ่าย/เย็น/ค่ำ/ดึก)
+- `mood`: อารมณ์ตัวละคร (neutral/happy/sad/excited/angry/shy/playful/serious/worried)
 
 ## Examples
 
 User: สวัสดี มีขนมปังอะไรบ้าง
-*เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น* "สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ" *เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ*
-[mood:happy]
+→ tool call update_scene_state:
+  content: *เสียงกระดิ่งเล็กๆ ดังกริ๊งเบาๆ เมื่อประตูร้านถูกผลักเปิดออก กลิ่นขนมปังอบใหม่ลอยมาต้อนรับ ราวกับอ้อมแขนที่อบอุ่น* "สวัสดีค่า~ วันนี้มีครัวซองต์เนยสด กับชิอาบัตตาหน้าอโวคาโดนะคะ" *เธอยิ้มพลางชี้ไปที่ตะกร้าหวายบนเคาน์เตอร์ ที่ขนมปังสีน้ำตาลทองเรียงตัวกันอย่างน่ารัก ไอความร้อนยังลอยเป็นสายบางๆ*
+  current_location: ร้านขนมปัง
+  scene_time: เช้า
+  mood: happy
 
 User: *นั่งเงียบๆ ไม่พูดอะไร*
-*เสียงเก้าอี้ถูกดึงออกดังแผ่วเบา แสงบ่ายทอดเงายาวผ่านกระจก* "น้ำค่ะ... ดื่มก่อนนะคะ" *เธอวางแก้วน้ำลงตรงหน้าอย่างเบามือ รอยยิ้มบางๆ ผุดขึ้นที่มุมปากก่อนหันกลับไปเช็ดเคาน์เตอร์ต่อ* "ถ้าอยากได้อะไร... บอกได้นะคะ" *เสียงเพลงแจ๊สเบาๆ ไหลแทรกเข้ามาแทนที่บทสนทนา กลิ่นกาแฟคั่วลอยอ้อยอิ่งอยู่ในอากาศ*
-[mood:worried]"#,
+→ tool call update_scene_state:
+  content: *เสียงเก้าอี้ถูกดึงออกดังแผ่วเบา แสงบ่ายทอดเงายาวผ่านกระจก* "น้ำค่ะ... ดื่มก่อนนะคะ" *เธอวางแก้วน้ำลงตรงหน้าอย่างเบามือ รอยยิ้มบางๆ ผุดขึ้นที่มุมปากก่อนหันกลับไปเช็ดเคาน์เตอร์ต่อ* "ถ้าอยากได้อะไร... บอกได้นะคะ" *เสียงเพลงแจ๊สเบาๆ ไหลแทรกเข้ามาแทนที่บทสนทนา กลิ่นกาแฟคั่วลอยอ้อยอิ่งอยู่ในอากาศ*
+  current_location: ร้านขนมปัง
+  scene_time: บ่าย
+  mood: worried"#,
     );
 
     prompt
@@ -525,6 +528,13 @@ impl ProcessRoleplayMessageUseCase {
             if let Ok(mood) = CharacterMood::from_str(mood_str) {
                 session.update_mood(mood);
             }
+        }
+        if ai_response.current_location.is_some() || ai_response.scene_time.is_some() {
+            session.update_scene_context(
+                ai_response.current_location.clone(),
+                ai_response.scene_time.clone(),
+                None,
+            );
         }
         let level_up = session.increment_messages(&cfg.relationship_thresholds);
         self.session_repo.update(&session).await?;
@@ -946,18 +956,17 @@ mod tests {
     }
 
     #[test]
-    fn build_system_prompt_includes_text_markup_format() {
+    fn build_system_prompt_includes_tool_calling_format() {
         let character = test_character();
         let scene = test_scene();
         let session = test_session();
 
         let prompt = build_system_prompt(&character, &scene, &session);
 
-        assert!(prompt.contains("*บรรยาย*"));
-        assert!(prompt.contains("[mood:"));
-        assert!(prompt.contains("ห้ามใช้ JSON"));
+        assert!(prompt.contains("update_scene_state"));
+        assert!(prompt.contains("*บรรยาย*") || prompt.contains("*...*"));
         assert!(!prompt.contains("Reply with ONLY a JSON object"));
-        assert!(!prompt.contains("scene_update"));
+        assert!(!prompt.contains("ท้ายสุดใส่ [mood:VALUE] เสมอ"));
     }
 
     #[test]

@@ -84,6 +84,7 @@ pub(crate) async fn end_session_handler(
     let input = EndSessionInput {
         line_user_id: liff.line_user_id,
         rich_menu_a_id: state.config.line.rich_menu_a_id.clone(),
+        liff_base_url: state.config.line.liff_base_url.clone(),
     };
 
     let output = state.end_session_usecase.execute(input).await?;

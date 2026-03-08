@@ -1,9 +1,97 @@
 use std::sync::LazyLock;
 
 use regex::Regex;
+use serde::Deserialize;
+use serde_json::{json, Value};
 
 use crate::domain::services::ai_client::{AiRoleplayResponse, BlockType, ResponseBlock};
 use crate::domain::services::AiClientError;
+
+#[derive(Deserialize)]
+pub struct UpdateSceneStateArgs {
+    pub content: String,
+    pub current_location: String,
+    pub scene_time: String,
+    pub mood: String,
+}
+
+/// Tool definition in Anthropic format (used by Claude API).
+pub fn claude_tool_definition() -> Value {
+    json!({
+        "name": "update_scene_state",
+        "description": "Update the scene state with the roleplay response content, location, time, and mood.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "Response text with *narration* and dialogue markup"
+                },
+                "current_location": {
+                    "type": "string",
+                    "description": "Current scene location in Thai"
+                },
+                "scene_time": {
+                    "type": "string",
+                    "enum": ["เช้า", "สาย", "เที่ยง", "บ่าย", "เย็น", "ค่ำ", "ดึก"],
+                    "description": "Time of day"
+                },
+                "mood": {
+                    "type": "string",
+                    "enum": ["neutral", "happy", "sad", "excited", "angry", "shy", "playful", "serious", "worried"],
+                    "description": "Character mood"
+                }
+            },
+            "required": ["content", "current_location", "scene_time", "mood"]
+        }
+    })
+}
+
+/// Tool definition in OpenAI-compatible format (used by OpenAI, Together, Venice).
+pub fn openai_tool_definition() -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": "update_scene_state",
+            "description": "Update the scene state with the roleplay response content, location, time, and mood.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "content": {
+                        "type": "string",
+                        "description": "Response text with *narration* and dialogue markup"
+                    },
+                    "current_location": {
+                        "type": "string",
+                        "description": "Current scene location in Thai"
+                    },
+                    "scene_time": {
+                        "type": "string",
+                        "enum": ["เช้า", "สาย", "เที่ยง", "บ่าย", "เย็น", "ค่ำ", "ดึก"],
+                        "description": "Time of day"
+                    },
+                    "mood": {
+                        "type": "string",
+                        "enum": ["neutral", "happy", "sad", "excited", "angry", "shy", "playful", "serious", "worried"],
+                        "description": "Character mood"
+                    }
+                },
+                "required": ["content", "current_location", "scene_time", "mood"]
+            }
+        }
+    })
+}
+
+/// Convert tool call args into `AiRoleplayResponse`.
+pub fn tool_args_to_response(args: UpdateSceneStateArgs) -> AiRoleplayResponse {
+    let blocks = parse_text_into_blocks(&args.content);
+    AiRoleplayResponse {
+        blocks,
+        mood: Some(args.mood),
+        current_location: Some(args.current_location),
+        scene_time: Some(args.scene_time),
+    }
+}
 
 static MOOD_TAG_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[mood:([^\]]+)\]\s*$").unwrap());
@@ -55,7 +143,12 @@ pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError
     let (text, mood) = extract_mood_tag(content);
     let blocks = parse_text_into_blocks(&text);
 
-    Ok(AiRoleplayResponse { blocks, mood })
+    Ok(AiRoleplayResponse {
+        blocks,
+        mood,
+        current_location: None,
+        scene_time: None,
+    })
 }
 
 /// Extract `[mood:VALUE]` tag from end of text.
@@ -303,5 +396,32 @@ mod tests {
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].block_type, BlockType::Dialogue);
         assert_eq!(blocks[0].text, "สวัสดี");
+    }
+
+    #[test]
+    fn tool_args_to_response_produces_correct_blocks_and_state() {
+        let args = UpdateSceneStateArgs {
+            content: "*เธอยิ้ม* สวัสดีค่า".to_string(),
+            current_location: "ร้านกาแฟ".to_string(),
+            scene_time: "บ่าย".to_string(),
+            mood: "happy".to_string(),
+        };
+        let resp = tool_args_to_response(args);
+        assert_eq!(resp.blocks.len(), 2);
+        assert_eq!(resp.blocks[0].block_type, BlockType::Narration);
+        assert_eq!(resp.blocks[0].text, "เธอยิ้ม");
+        assert_eq!(resp.blocks[1].block_type, BlockType::Dialogue);
+        assert_eq!(resp.blocks[1].text, "สวัสดีค่า");
+        assert_eq!(resp.mood, Some("happy".to_string()));
+        assert_eq!(resp.current_location, Some("ร้านกาแฟ".to_string()));
+        assert_eq!(resp.scene_time, Some("บ่าย".to_string()));
+    }
+
+    #[test]
+    fn parse_llm_response_sets_location_and_time_to_none() {
+        let raw = "*เธอยิ้ม* สวัสดี\n[mood:happy]";
+        let result = parse_llm_response(raw).unwrap();
+        assert!(result.current_location.is_none());
+        assert!(result.scene_time.is_none());
     }
 }

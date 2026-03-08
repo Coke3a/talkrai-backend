@@ -140,7 +140,7 @@ pub fn build_roleplay_bubble(
                 {
                     "type": "text",
                     "text": time_display,
-                    "color": "#888888",
+                    "color": "#9B9186",
                     "size": "xxs",
                     "flex": 0
                 }
@@ -274,7 +274,7 @@ pub fn build_roleplay_blocks_bubble(
             {
                 "type": "text",
                 "text": time_display,
-                "color": "#888888",
+                "color": "#9B9186",
                 "size": "xxs",
                 "flex": 0
             }

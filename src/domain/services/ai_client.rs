@@ -42,6 +42,8 @@ pub struct ResponseBlock {
 pub struct AiRoleplayResponse {
     pub blocks: Vec<ResponseBlock>,
     pub mood: Option<String>,
+    pub current_location: Option<String>,
+    pub scene_time: Option<String>,
 }
 
 impl AiRoleplayResponse {

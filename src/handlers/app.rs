@@ -86,6 +86,8 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
     let end_session_usecase = Arc::new(EndSessionUseCase::new(
         Arc::clone(&repos.user_repo),
         Arc::clone(&repos.session_repo),
+        Arc::clone(&repos.scene_repo),
+        Arc::clone(&repos.character_repo),
         Arc::clone(&line_client),
     ));
 
