@@ -16,7 +16,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # Stage 4: Build - compile the actual application
 FROM deps AS build
 COPY . .
-RUN cargo build --release --bin talk-a-line-backend
+RUN cargo build --release --bin talkrai-backend
 
 # Stage 5: Runtime - minimal production image
 FROM debian:trixie-slim AS runtime
@@ -32,10 +32,10 @@ ENV TZ=Asia/Bangkok
 RUN groupadd -g 10001 app && \
     useradd -u 10001 -g app -s /bin/false app
 
-COPY --from=build /app/target/release/talk-a-line-backend /usr/local/bin/talk-a-line-backend
+COPY --from=build /app/target/release/talkrai-backend /usr/local/bin/talkrai-backend
 
 USER app
 
 EXPOSE 8080
 
-ENTRYPOINT ["/usr/local/bin/talk-a-line-backend"]
+ENTRYPOINT ["/usr/local/bin/talkrai-backend"]

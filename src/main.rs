@@ -1,9 +1,9 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use talk_a_line_backend::config::config_loader;
-use talk_a_line_backend::handlers;
-use talk_a_line_backend::infra::db::postgres_connection;
+use talkrai_backend::config::config_loader;
+use talkrai_backend::handlers;
+use talkrai_backend::infra::db::postgres_connection;
 
 #[tokio::main]
 async fn main() {
