@@ -1,4 +1,4 @@
-app = 'talk-a-line-backend'
+app = 'talkrai-backend'
 primary_region = 'sin'
 
 [build]

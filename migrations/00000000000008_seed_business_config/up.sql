@@ -1,5 +1,6 @@
 INSERT INTO app_config (key, value) VALUES
-    ('ai_max_tokens', '1024'),
+    ('active_llm_provider', 'together'),
+    ('ai_max_tokens', '600'),
     ('welcome_credits', '20'),
     ('relationship_threshold_acquaintance', '20'),
     ('relationship_threshold_friend', '40'),

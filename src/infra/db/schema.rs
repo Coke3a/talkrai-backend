@@ -23,6 +23,7 @@ diesel::table! {
         background -> Text,
         system_prompt -> Text,
         avatar_url -> Nullable<Text>,
+        appearance_prompt -> Nullable<Text>,
         genre_tags -> Array<Text>,
         gender -> Varchar,
         is_active -> Bool,
@@ -48,6 +49,7 @@ diesel::table! {
         start_relationship_level -> Varchar,
         start_mood -> Varchar,
         image_url -> Nullable<Text>,
+        image_prompt -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
     }

@@ -15,6 +15,7 @@ CREATE TABLE scenes (
     start_mood                  VARCHAR NOT NULL DEFAULT 'neutral'
                                 CHECK (start_mood IN ('neutral', 'happy', 'sad', 'excited', 'angry', 'shy', 'playful', 'serious', 'worried')),
     image_url           TEXT,
+    image_prompt        TEXT,
     is_adult_content    BOOLEAN NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -36,6 +36,7 @@ struct SceneRow {
     start_relationship_level: String,
     start_mood: String,
     image_url: Option<String>,
+    image_prompt: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -59,6 +60,7 @@ impl SceneRow {
                 .expect("invalid start_relationship_level in DB"),
             CharacterMood::from_str(&self.start_mood).expect("invalid start_mood in DB"),
             self.image_url,
+            self.image_prompt,
             self.created_at,
             self.updated_at,
         )

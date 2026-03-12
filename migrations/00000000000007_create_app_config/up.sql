@@ -3,5 +3,3 @@ CREATE TABLE app_config (
     value      VARCHAR NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-INSERT INTO app_config (key, value) VALUES ('active_llm_provider', 'claude');

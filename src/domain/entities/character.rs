@@ -10,6 +10,7 @@ pub struct Character {
     background: String,
     system_prompt: String,
     avatar_url: Option<String>,
+    appearance_prompt: Option<String>,
     genre_tags: Vec<String>,
     gender: CharacterGender,
     is_active: bool,
@@ -26,6 +27,7 @@ impl Character {
         background: String,
         system_prompt: String,
         avatar_url: Option<String>,
+        appearance_prompt: Option<String>,
         genre_tags: Vec<String>,
         gender: CharacterGender,
     ) -> Self {
@@ -38,6 +40,7 @@ impl Character {
             background,
             system_prompt,
             avatar_url,
+            appearance_prompt,
             genre_tags,
             gender,
             is_active: true,
@@ -55,6 +58,7 @@ impl Character {
         background: String,
         system_prompt: String,
         avatar_url: Option<String>,
+        appearance_prompt: Option<String>,
         genre_tags: Vec<String>,
         gender: CharacterGender,
         is_active: bool,
@@ -69,6 +73,7 @@ impl Character {
             background,
             system_prompt,
             avatar_url,
+            appearance_prompt,
             genre_tags,
             gender,
             is_active,
@@ -103,6 +108,10 @@ impl Character {
 
     pub fn avatar_url(&self) -> Option<&str> {
         self.avatar_url.as_deref()
+    }
+
+    pub fn appearance_prompt(&self) -> Option<&str> {
+        self.appearance_prompt.as_deref()
     }
 
     pub fn genre_tags(&self) -> &[String] {

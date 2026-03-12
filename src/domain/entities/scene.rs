@@ -20,6 +20,7 @@ pub struct Scene {
     start_relationship_level: RelationshipLevel,
     start_mood: CharacterMood,
     image_url: Option<String>,
+    image_prompt: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -57,6 +58,7 @@ impl Scene {
             start_relationship_level,
             start_mood,
             image_url: None,
+            image_prompt: None,
             created_at: now,
             updated_at: now,
         }
@@ -79,6 +81,7 @@ impl Scene {
         start_relationship_level: RelationshipLevel,
         start_mood: CharacterMood,
         image_url: Option<String>,
+        image_prompt: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -98,6 +101,7 @@ impl Scene {
             start_relationship_level,
             start_mood,
             image_url,
+            image_prompt,
             created_at,
             updated_at,
         }
@@ -161,6 +165,10 @@ impl Scene {
 
     pub fn image_url(&self) -> Option<&str> {
         self.image_url.as_deref()
+    }
+
+    pub fn image_prompt(&self) -> Option<&str> {
+        self.image_prompt.as_deref()
     }
 
     pub fn created_at(&self) -> &DateTime<Utc> {
