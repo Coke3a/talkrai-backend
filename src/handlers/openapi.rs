@@ -1,7 +1,7 @@
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::handlers::routers::{health_check, liff_api, ready_check, webhook};
+use crate::handlers::routers::{health_check, liff, ready_check, webhook};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -9,16 +9,26 @@ use crate::handlers::routers::{health_check, liff_api, ready_check, webhook};
         health_check::health_check_handler,
         ready_check::ready_check_handler,
         webhook::webhook_handler,
-        liff_api::start_session_handler,
-        liff_api::end_session_handler,
+        liff::start_session_handler,
+        liff::end_session_handler,
+        liff::get_current_session_handler,
+        liff::get_profile_handler,
+        liff::get_credit_balance_handler,
+        liff::get_credit_transactions_handler,
     ),
     components(schemas(
         health_check::HealthResponse,
         ready_check::ReadyResponse,
         webhook::WebhookResponse,
-        liff_api::StartSessionRequest,
-        liff_api::StartSessionResponse,
-        liff_api::EndSessionResponse,
+        liff::StartSessionRequest,
+        liff::StartSessionResponse,
+        liff::EndSessionResponse,
+        liff::CurrentSessionResponse,
+        liff::CurrentSessionData,
+        liff::ProfileResponse,
+        liff::CreditBalanceResponse,
+        liff::CreditTransactionsResponse,
+        liff::TransactionItemResponse,
         crate::handlers::routers::error_response::ErrorResponse,
     )),
     modifiers(&SecurityAddon),

@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::domain::entities::Message;
 use crate::domain::repositories::RepoError;
-use crate::domain::value_objects::SessionId;
+use crate::domain::value_objects::{SessionId, UserId};
 
 #[async_trait]
 pub trait MessageRepository: Send + Sync {
@@ -13,4 +13,5 @@ pub trait MessageRepository: Send + Sync {
         session_id: &SessionId,
         limit: i64,
     ) -> Result<Vec<Message>, RepoError>;
+    async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, RepoError>;
 }

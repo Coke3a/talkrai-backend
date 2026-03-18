@@ -19,4 +19,11 @@ pub trait CreditRepository: Send + Sync {
         amount: i32,
         transaction: &CreditTransaction,
     ) -> Result<(), RepoError>;
+
+    async fn find_transactions_by_user_id(
+        &self,
+        user_id: &UserId,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<CreditTransaction>, i64), RepoError>;
 }

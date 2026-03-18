@@ -7,9 +7,11 @@ use diesel_async::scoped_futures::ScopedFutureExt;
 use diesel_async::{AsyncConnection, RunQueryDsl};
 use uuid::Uuid;
 
+use std::str::FromStr;
+
 use crate::domain::entities::{CreditBalance, CreditTransaction};
 use crate::domain::repositories::{CreditRepository, RepoError};
-use crate::domain::value_objects::UserId;
+use crate::domain::value_objects::{CreditTransactionId, CreditTransactionType, UserId};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::{credit_balances, credit_transactions};
 
@@ -64,6 +66,36 @@ impl<'a> NewCreditBalanceRow<'a> {
             created_at: *entity.created_at(),
             updated_at: *entity.updated_at(),
         }
+    }
+}
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = credit_transactions)]
+struct CreditTransactionRow {
+    id: Uuid,
+    user_id: Uuid,
+    #[diesel(column_name = type_)]
+    type_: String,
+    amount: i32,
+    balance_after: i32,
+    reference_id: Option<Uuid>,
+    description: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+impl CreditTransactionRow {
+    fn into_entity(self) -> CreditTransaction {
+        CreditTransaction::from_existing(
+            CreditTransactionId::from_uuid(self.id),
+            UserId::from_uuid(self.user_id),
+            CreditTransactionType::from_str(&self.type_)
+                .expect("invalid credit_transaction_type in DB"),
+            self.amount,
+            self.balance_after,
+            self.reference_id,
+            self.description,
+            self.created_at,
+        )
     }
 }
 
@@ -180,5 +212,34 @@ impl CreditRepository for CreditPostgres {
         .map_err(|e| map_diesel_error("credit.deduct_and_log", e))?;
 
         Ok(())
+    }
+
+    async fn find_transactions_by_user_id(
+        &self,
+        user_id: &UserId,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<CreditTransaction>, i64), RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let total = credit_transactions::table
+            .filter(credit_transactions::user_id.eq(user_id.as_uuid()))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("credit.count_transactions_by_user_id", e))?;
+
+        let rows = credit_transactions::table
+            .filter(credit_transactions::user_id.eq(user_id.as_uuid()))
+            .order(credit_transactions::created_at.desc())
+            .limit(limit)
+            .offset(offset)
+            .load::<CreditTransactionRow>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("credit.find_transactions_by_user_id", e))?;
+
+        let transactions = rows.into_iter().map(|row| row.into_entity()).collect();
+
+        Ok((transactions, total))
     }
 }

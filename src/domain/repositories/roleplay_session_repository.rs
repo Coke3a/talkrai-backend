@@ -11,6 +11,7 @@ pub trait RoleplaySessionRepository: Send + Sync {
         &self,
         user_id: &UserId,
     ) -> Result<Option<RoleplaySession>, RepoError>;
+    async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, RepoError>;
     async fn create(&self, session: &RoleplaySession) -> Result<(), RepoError>;
     async fn update(&self, session: &RoleplaySession) -> Result<(), RepoError>;
 }

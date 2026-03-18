@@ -10,9 +10,9 @@ use std::str::FromStr;
 
 use crate::domain::entities::Message;
 use crate::domain::repositories::{MessageRepository, RepoError};
-use crate::domain::value_objects::{MessageId, MessageRole, SessionId};
+use crate::domain::value_objects::{MessageId, MessageRole, SessionId, UserId};
 use crate::infra::db::postgres_connection::PgPool;
-use crate::infra::db::schema::messages;
+use crate::infra::db::schema::{messages, roleplay_sessions};
 
 use super::error_mapping::{map_diesel_error, map_pool_error};
 
@@ -102,6 +102,20 @@ impl MessageRepository for MessagePostgres {
             .map_err(|e| map_diesel_error("message.create_many", e))?;
 
         Ok(())
+    }
+
+    async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let count = messages::table
+            .inner_join(roleplay_sessions::table)
+            .filter(roleplay_sessions::user_id.eq(user_id.as_uuid()))
+            .count()
+            .get_result::<i64>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("message.count_by_user_id", e))?;
+
+        Ok(count)
     }
 
     async fn find_by_session_id(

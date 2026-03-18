@@ -28,13 +28,17 @@ use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
 use crate::handlers::openapi::ApiDoc;
-use crate::handlers::routers::{health_check, liff_api, ready_check, webhook};
+use crate::handlers::routers::{health_check, liff, ready_check, webhook};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::usecases::background::{JobPollerUseCase, StaleJobCleanupUseCase};
-use crate::usecases::end_session::EndSessionUseCase;
+use crate::usecases::liff::end_session::EndSessionUseCase;
+use crate::usecases::liff::get_credit_balance::GetCreditBalanceUseCase;
+use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsUseCase;
+use crate::usecases::liff::get_current_session::GetCurrentSessionUseCase;
+use crate::usecases::liff::get_profile::GetProfileUseCase;
+use crate::usecases::liff::start_session::StartSessionUseCase;
 use crate::usecases::process_roleplay_message::ProcessRoleplayMessageUseCase;
 use crate::usecases::receive_webhook::ReceiveWebhookUseCase;
-use crate::usecases::start_session::StartSessionUseCase;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -46,6 +50,10 @@ pub struct AppState {
     pub webhook_usecase: Arc<ReceiveWebhookUseCase>,
     pub start_session_usecase: Arc<StartSessionUseCase>,
     pub end_session_usecase: Arc<EndSessionUseCase>,
+    pub get_profile_usecase: Arc<GetProfileUseCase>,
+    pub get_credit_balance_usecase: Arc<GetCreditBalanceUseCase>,
+    pub get_credit_transactions_usecase: Arc<GetCreditTransactionsUseCase>,
+    pub get_current_session_usecase: Arc<GetCurrentSessionUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -91,6 +99,29 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&line_client),
     ));
 
+    let get_profile_usecase = Arc::new(GetProfileUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.session_repo),
+        Arc::clone(&repos.message_repo),
+    ));
+
+    let get_credit_balance_usecase = Arc::new(GetCreditBalanceUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.credit_repo),
+    ));
+
+    let get_credit_transactions_usecase = Arc::new(GetCreditTransactionsUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.credit_repo),
+    ));
+
+    let get_current_session_usecase = Arc::new(GetCurrentSessionUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.session_repo),
+        Arc::clone(&repos.character_repo),
+        Arc::clone(&repos.scene_repo),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -100,6 +131,10 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         webhook_usecase,
         start_session_usecase,
         end_session_usecase,
+        get_profile_usecase,
+        get_credit_balance_usecase,
+        get_credit_transactions_usecase,
+        get_current_session_usecase,
     };
 
     let app = build_router(state, &config);
@@ -158,7 +193,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
 
     let router = Router::new()
         .route("/webhook", post(webhook::webhook_handler))
-        .nest("/api", liff_api::router())
+        .nest("/api", liff::router())
         .route("/health-check", get(health_check::health_check_handler))
         .route("/ready-check", get(ready_check::ready_check_handler));
 
