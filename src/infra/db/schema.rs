@@ -24,7 +24,8 @@ diesel::table! {
         system_prompt -> Text,
         avatar_url -> Nullable<Text>,
         appearance_prompt -> Nullable<Text>,
-        genre_tags -> Array<Text>,
+        appearance_tags -> Array<Text>,
+        personality_tags -> Array<Text>,
         gender -> Varchar,
         is_active -> Bool,
         created_at -> Timestamptz,
@@ -137,6 +138,20 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    tag_definitions (id) {
+        id -> Uuid,
+        category -> Varchar,
+        key -> Varchar,
+        display_name -> Varchar,
+        description -> Nullable<Text>,
+        sort_order -> Int4,
+        is_active -> Bool,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
 diesel::joinable!(scenes -> characters (character_id));
 diesel::joinable!(roleplay_sessions -> users (user_id));
 diesel::joinable!(roleplay_sessions -> characters (character_id));
@@ -156,4 +171,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     jobs,
     credit_balances,
     credit_transactions,
+    tag_definitions,
 );

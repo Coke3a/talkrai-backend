@@ -125,4 +125,18 @@ impl SceneRepository for ScenePostgres {
 
         Ok(result.map(|row| row.into_entity()))
     }
+
+    async fn find_all_active(&self) -> Result<Vec<Scene>, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let results = scenes::table
+            .filter(scenes::is_active.eq(true))
+            .filter(scenes::is_adult_content.eq(false))
+            .order(scenes::created_at.desc())
+            .load::<SceneRow>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("scene.find_all_active", e))?;
+
+        Ok(results.into_iter().map(|row| row.into_entity()).collect())
+    }
 }

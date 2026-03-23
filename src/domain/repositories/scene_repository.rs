@@ -15,4 +15,5 @@ pub trait SceneRepository: Send + Sync {
         &self,
         character_id: &CharacterId,
     ) -> Result<Option<Scene>, RepoError>;
+    async fn find_all_active(&self) -> Result<Vec<Scene>, RepoError>;
 }

@@ -17,6 +17,8 @@ use crate::usecases::liff::get_credit_balance::GetCreditBalanceInput;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsInput;
 use crate::usecases::liff::get_current_session::GetCurrentSessionInput;
 use crate::usecases::liff::get_profile::GetProfileInput;
+use crate::usecases::liff::get_scenes::{SceneCharacterItem, SceneItem};
+use crate::usecases::liff::get_tags::TagItem;
 use crate::usecases::liff::start_session::StartSessionInput;
 
 pub fn router() -> Router<AppState> {
@@ -30,6 +32,8 @@ pub fn router() -> Router<AppState> {
             "/credits/transactions",
             get(get_credit_transactions_handler),
         )
+        .route("/tags", get(get_tags_handler))
+        .route("/scenes", get(get_scenes_handler))
 }
 
 // ── Session Start/End ──────────────────────────────────────
@@ -323,4 +327,259 @@ pub(crate) async fn get_credit_transactions_handler(
             total: output.total,
         }),
     ))
+}
+
+// ── Get Tags ─────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TagsResponse {
+    pub appearance: Vec<TagItemResponse>,
+    pub personality: Vec<TagItemResponse>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TagItemResponse {
+    pub key: String,
+    pub display_name: String,
+    pub description: Option<String>,
+}
+
+impl From<TagItem> for TagItemResponse {
+    fn from(item: TagItem) -> Self {
+        Self {
+            key: item.key,
+            display_name: item.display_name,
+            description: item.description,
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/tags",
+    responses(
+        (status = 200, description = "Tag definitions grouped by category", body = TagsResponse),
+    )
+)]
+pub(crate) async fn get_tags_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let output = state.get_tags_usecase.execute().await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(TagsResponse {
+            appearance: output
+                .appearance
+                .into_iter()
+                .map(TagItemResponse::from)
+                .collect(),
+            personality: output
+                .personality
+                .into_iter()
+                .map(TagItemResponse::from)
+                .collect(),
+        }),
+    ))
+}
+
+// ── Get Scenes ────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ScenesResponse {
+    pub scenes: Vec<SceneItemResponse>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SceneItemResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub location: String,
+    pub time_of_day: String,
+    pub atmosphere_summary: String,
+    pub opening_narrator: String,
+    pub opening_dialogue: String,
+    pub start_mood: String,
+    pub image_url: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub character: SceneCharacterResponse,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct SceneCharacterResponse {
+    pub id: Uuid,
+    pub name: String,
+    pub gender: String,
+    pub avatar_url: Option<String>,
+    pub appearance_tags: Vec<String>,
+    pub personality_tags: Vec<String>,
+}
+
+impl From<SceneItem> for SceneItemResponse {
+    fn from(item: SceneItem) -> Self {
+        Self {
+            id: item.id,
+            name: item.name,
+            location: item.location,
+            time_of_day: item.time_of_day,
+            atmosphere_summary: item.atmosphere_summary,
+            opening_narrator: item.opening_narrator,
+            opening_dialogue: item.opening_dialogue,
+            start_mood: item.start_mood,
+            image_url: item.image_url,
+            created_at: item.created_at,
+            character: SceneCharacterResponse::from(item.character),
+        }
+    }
+}
+
+impl From<SceneCharacterItem> for SceneCharacterResponse {
+    fn from(item: SceneCharacterItem) -> Self {
+        Self {
+            id: item.id,
+            name: item.name,
+            gender: item.gender,
+            avatar_url: item.avatar_url,
+            appearance_tags: item.appearance_tags,
+            personality_tags: item.personality_tags,
+        }
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/scenes",
+    responses(
+        (status = 200, description = "All active scenes with character metadata", body = ScenesResponse),
+    )
+)]
+pub(crate) async fn get_scenes_handler(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let output = state.get_scenes_usecase.execute().await?;
+
+    let scenes = output
+        .scenes
+        .into_iter()
+        .map(SceneItemResponse::from)
+        .collect();
+
+    Ok((StatusCode::OK, Json(ScenesResponse { scenes })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tags_response_serializes_to_expected_json() {
+        let response = TagsResponse {
+            appearance: vec![
+                TagItemResponse {
+                    key: "cute".to_string(),
+                    display_name: "น่ารัก".to_string(),
+                    description: Some("หน้าอ่อนหวาน ตาโต ดูน่าเอ็นดู".to_string()),
+                },
+                TagItemResponse {
+                    key: "cool".to_string(),
+                    display_name: "เท่".to_string(),
+                    description: None,
+                },
+            ],
+            personality: vec![TagItemResponse {
+                key: "tsundere".to_string(),
+                display_name: "ซึนเดเระ".to_string(),
+                description: Some("ภายนอกเย็นชา แต่ข้างในอ่อนโยน".to_string()),
+            }],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+
+        // Top-level keys
+        assert!(json.get("appearance").is_some());
+        assert!(json.get("personality").is_some());
+
+        // Appearance array
+        let appearance = json["appearance"].as_array().unwrap();
+        assert_eq!(appearance.len(), 2);
+        assert_eq!(appearance[0]["key"], "cute");
+        assert_eq!(appearance[0]["display_name"], "น่ารัก");
+        assert_eq!(appearance[0]["description"], "หน้าอ่อนหวาน ตาโต ดูน่าเอ็นดู");
+        assert_eq!(appearance[1]["key"], "cool");
+        assert!(appearance[1]["description"].is_null());
+
+        // Personality array
+        let personality = json["personality"].as_array().unwrap();
+        assert_eq!(personality.len(), 1);
+        assert_eq!(personality[0]["key"], "tsundere");
+        assert_eq!(personality[0]["display_name"], "ซึนเดเระ");
+    }
+
+    #[test]
+    fn tags_response_empty_categories() {
+        let response = TagsResponse {
+            appearance: vec![],
+            personality: vec![],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["appearance"].as_array().unwrap().len(), 0);
+        assert_eq!(json["personality"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn tag_item_response_from_usecase_tag_item() {
+        let item = TagItem {
+            key: "elegant".to_string(),
+            display_name: "สง่างาม".to_string(),
+            description: Some("มีออร่า ดูมีระดับ".to_string()),
+        };
+
+        let response: TagItemResponse = item.into();
+        assert_eq!(response.key, "elegant");
+        assert_eq!(response.display_name, "สง่างาม");
+        assert_eq!(response.description.as_deref(), Some("มีออร่า ดูมีระดับ"));
+    }
+
+    #[test]
+    fn tag_item_response_from_usecase_tag_item_no_description() {
+        let item = TagItem {
+            key: "sporty".to_string(),
+            display_name: "สปอร์ตี้".to_string(),
+            description: None,
+        };
+
+        let response: TagItemResponse = item.into();
+        assert_eq!(response.key, "sporty");
+        assert_eq!(response.display_name, "สปอร์ตี้");
+        assert!(response.description.is_none());
+    }
+
+    #[test]
+    fn tags_response_has_no_extra_fields() {
+        let response = TagsResponse {
+            appearance: vec![TagItemResponse {
+                key: "cute".to_string(),
+                display_name: "น่ารัก".to_string(),
+                description: None,
+            }],
+            personality: vec![],
+        };
+
+        let json = serde_json::to_value(&response).unwrap();
+        let obj = json.as_object().unwrap();
+
+        // Only "appearance" and "personality" keys, nothing else
+        assert_eq!(obj.len(), 2);
+        assert!(obj.contains_key("appearance"));
+        assert!(obj.contains_key("personality"));
+
+        // TagItemResponse only has key, display_name, description
+        let item = &json["appearance"][0];
+        let item_obj = item.as_object().unwrap();
+        assert_eq!(item_obj.len(), 3);
+        assert!(item_obj.contains_key("key"));
+        assert!(item_obj.contains_key("display_name"));
+        assert!(item_obj.contains_key("description"));
+    }
 }

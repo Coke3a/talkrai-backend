@@ -8,6 +8,7 @@ pub mod job_postgres;
 pub mod message_postgres;
 pub mod roleplay_session_postgres;
 pub mod scene_postgres;
+pub mod tag_definition_postgres;
 pub mod user_postgres;
 
 pub use app_config_postgres::AppConfigPostgres;
@@ -18,4 +19,5 @@ pub use job_postgres::JobPostgres;
 pub use message_postgres::MessagePostgres;
 pub use roleplay_session_postgres::RoleplaySessionPostgres;
 pub use scene_postgres::ScenePostgres;
+pub use tag_definition_postgres::TagDefinitionPostgres;
 pub use user_postgres::UserPostgres;

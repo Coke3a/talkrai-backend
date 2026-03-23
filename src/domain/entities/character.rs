@@ -11,7 +11,8 @@ pub struct Character {
     system_prompt: String,
     avatar_url: Option<String>,
     appearance_prompt: Option<String>,
-    genre_tags: Vec<String>,
+    appearance_tags: Vec<String>,
+    personality_tags: Vec<String>,
     gender: CharacterGender,
     is_active: bool,
     created_at: DateTime<Utc>,
@@ -28,7 +29,8 @@ impl Character {
         system_prompt: String,
         avatar_url: Option<String>,
         appearance_prompt: Option<String>,
-        genre_tags: Vec<String>,
+        appearance_tags: Vec<String>,
+        personality_tags: Vec<String>,
         gender: CharacterGender,
     ) -> Self {
         let now = Utc::now();
@@ -41,7 +43,8 @@ impl Character {
             system_prompt,
             avatar_url,
             appearance_prompt,
-            genre_tags,
+            appearance_tags,
+            personality_tags,
             gender,
             is_active: true,
             created_at: now,
@@ -59,7 +62,8 @@ impl Character {
         system_prompt: String,
         avatar_url: Option<String>,
         appearance_prompt: Option<String>,
-        genre_tags: Vec<String>,
+        appearance_tags: Vec<String>,
+        personality_tags: Vec<String>,
         gender: CharacterGender,
         is_active: bool,
         created_at: DateTime<Utc>,
@@ -74,7 +78,8 @@ impl Character {
             system_prompt,
             avatar_url,
             appearance_prompt,
-            genre_tags,
+            appearance_tags,
+            personality_tags,
             gender,
             is_active,
             created_at,
@@ -114,8 +119,12 @@ impl Character {
         self.appearance_prompt.as_deref()
     }
 
-    pub fn genre_tags(&self) -> &[String] {
-        &self.genre_tags
+    pub fn appearance_tags(&self) -> &[String] {
+        &self.appearance_tags
+    }
+
+    pub fn personality_tags(&self) -> &[String] {
+        &self.personality_tags
     }
 
     pub fn gender(&self) -> &CharacterGender {

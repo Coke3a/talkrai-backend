@@ -6,6 +6,7 @@ pub mod job_repository;
 pub mod message_repository;
 pub mod roleplay_session_repository;
 pub mod scene_repository;
+pub mod tag_definition_repository;
 pub mod user_repository;
 
 pub use app_config_repository::AppConfigRepository;
@@ -16,4 +17,5 @@ pub use job_repository::JobRepository;
 pub use message_repository::MessageRepository;
 pub use roleplay_session_repository::RoleplaySessionRepository;
 pub use scene_repository::SceneRepository;
+pub use tag_definition_repository::TagDefinitionRepository;
 pub use user_repository::UserRepository;
