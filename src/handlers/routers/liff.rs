@@ -362,6 +362,7 @@ impl From<TagItem> for TagItemResponse {
     )
 )]
 pub(crate) async fn get_tags_handler(
+    _liff: LiffAuth,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let output = state.get_tags_usecase.execute().await?;
@@ -454,6 +455,7 @@ impl From<SceneCharacterItem> for SceneCharacterResponse {
     )
 )]
 pub(crate) async fn get_scenes_handler(
+    _liff: LiffAuth,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let output = state.get_scenes_usecase.execute().await?;
