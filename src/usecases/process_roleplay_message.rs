@@ -60,8 +60,6 @@ pub fn compact_atmosphere(atmosphere: &str) -> String {
         parts.join(" | ")
     }
 }
-
-
 pub fn build_system_prompt(
     character: &Character,
     scene: &Scene,
