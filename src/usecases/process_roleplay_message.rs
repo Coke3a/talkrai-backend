@@ -61,17 +61,6 @@ pub fn compact_atmosphere(atmosphere: &str) -> String {
     }
 }
 
-/// Extract `color_tone` field from a JSON atmosphere string. Falls back to "neutral".
-fn extract_color_tone(atmosphere: &str) -> String {
-    let trimmed = atmosphere.trim();
-    if !trimmed.starts_with('{') {
-        return "neutral".to_string();
-    }
-    serde_json::from_str::<serde_json::Value>(trimmed)
-        .ok()
-        .and_then(|v| v.get("color_tone")?.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "neutral".to_string())
-}
 
 pub fn build_system_prompt(
     character: &Character,
@@ -553,7 +542,7 @@ impl ProcessRoleplayMessageUseCase {
                 .current_location()
                 .unwrap_or_else(|| scene.location());
             let time_of_day = session.scene_time().unwrap_or_else(|| scene.time_of_day());
-            let color_tone = extract_color_tone(scene.atmosphere());
+            let color_tone = roleplay_flex::extract_color_tone(scene.atmosphere());
 
             let bubble = roleplay_flex::build_roleplay_blocks_bubble(
                 &ai_response.blocks,

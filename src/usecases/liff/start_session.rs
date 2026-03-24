@@ -7,9 +7,10 @@ use crate::domain::repositories::{
     CharacterRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
     UserRepository,
 };
+use crate::domain::services::ai_client::{BlockType, ResponseBlock};
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
-use crate::infra::line::flex_messages;
+use crate::infra::line::{flex_messages, roleplay_flex};
 use crate::usecases::UsecaseError;
 
 pub struct StartSessionInput {
@@ -158,34 +159,43 @@ impl StartSessionUseCase {
             );
         }
 
-        // 8b. Push opening messages to LINE
-        let narrator_sender_name = "ผู้บรรยาย".to_string();
-        let narrator_sender_icon = String::new();
-        let character_sender_name = character.name().as_str().to_string();
-        let character_sender_icon = character.avatar_url().unwrap_or_default().to_string();
-
-        let line_messages = vec![
-            LineMessage::Text {
+        // 8b. Push opening Flex message (same format as roleplay messages)
+        let blocks = vec![
+            ResponseBlock {
+                block_type: BlockType::Narration,
                 text: scene.opening_narrator().to_string(),
-                sender_name: narrator_sender_name,
-                sender_icon_url: narrator_sender_icon,
             },
-            LineMessage::Text {
+            ResponseBlock {
+                block_type: BlockType::Dialogue,
                 text: scene.opening_dialogue().to_string(),
-                sender_name: character_sender_name,
-                sender_icon_url: character_sender_icon,
             },
         ];
+        let color_tone = roleplay_flex::extract_color_tone(scene.atmosphere());
+        let bubble = roleplay_flex::build_roleplay_blocks_bubble(
+            &blocks,
+            scene.location(),
+            scene.time_of_day(),
+            &color_tone,
+        );
+        let alt_text = roleplay_flex::truncate_alt_text(scene.opening_narrator());
 
         if let Err(e) = self
             .line_client
-            .push_messages(&input.line_user_id, line_messages)
+            .push_messages(
+                &input.line_user_id,
+                vec![LineMessage::Flex {
+                    alt_text,
+                    contents: bubble,
+                    sender_name: character.name().as_str().to_string(),
+                    sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                }],
+            )
             .await
         {
             tracing::warn!(
                 error = %e,
                 line_user_id = %input.line_user_id,
-                "Failed to push opening messages"
+                "Failed to push opening Flex message"
             );
         }
 

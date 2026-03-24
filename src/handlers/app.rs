@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
 use tower_http::compression::CompressionLayer;
+use tower_http::cors::{AllowHeaders, AllowMethods, CorsLayer};
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::timeout::TimeoutLayer;
@@ -193,6 +194,19 @@ fn init_tracing() {
 }
 
 fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
+    let allowed_origin = config
+        .line
+        .liff_base_url
+        .trim_end_matches('/')
+        .parse::<axum::http::HeaderValue>()
+        .expect("LIFF_BASE_URL must be a valid header value");
+
+    let cors = CorsLayer::new()
+        .allow_origin(allowed_origin)
+        .allow_methods(AllowMethods::mirror_request())
+        .allow_headers(AllowHeaders::mirror_request())
+        .allow_credentials(true);
+
     let middleware = ServiceBuilder::new()
         .layer(SetRequestIdLayer::x_request_id(MakeRequestUuid))
         .layer(PropagateRequestIdLayer::x_request_id())
@@ -217,7 +231,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
         router
     };
 
-    router.layer(middleware).with_state(state)
+    router.layer(middleware).layer(cors).with_state(state)
 }
 
 #[allow(clippy::too_many_arguments)]

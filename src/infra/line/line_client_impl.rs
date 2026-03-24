@@ -449,6 +449,7 @@ impl LineClient for LineClientImpl {
             .http
             .post(&url)
             .header("Authorization", self.auth_header())
+            .header("Content-Length", "0")
             .send()
             .await
             .map_err(|e| LineClientError::NetworkError(e.into()))?;

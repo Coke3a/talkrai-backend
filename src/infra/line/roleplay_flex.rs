@@ -341,6 +341,18 @@ pub fn truncate_alt_text(text: &str) -> String {
     }
 }
 
+/// Extract `color_tone` field from a JSON atmosphere string. Falls back to "neutral".
+pub fn extract_color_tone(atmosphere: &str) -> String {
+    let trimmed = atmosphere.trim();
+    if !trimmed.starts_with('{') {
+        return "neutral".to_string();
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .ok()
+        .and_then(|v| v.get("color_tone")?.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "neutral".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
