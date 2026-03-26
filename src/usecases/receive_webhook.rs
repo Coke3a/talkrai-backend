@@ -409,6 +409,22 @@ impl ReceiveWebhookUseCase {
     async fn sync_user_from_line(&self, line_user_id: &str) -> Result<User, UsecaseError> {
         // Fast path: known user → return from DB immediately, skip LINE API
         if let Some(user) = self.user_repo.find_by_line_user_id(line_user_id).await? {
+            // Ensure credit balance exists (may be missing for re-followed users)
+            if self
+                .credit_repo
+                .find_balance_by_user_id(user.id())
+                .await?
+                .is_none()
+            {
+                let welcome_credits = self.resolve_welcome_credits().await?;
+                let balance = CreditBalance::new(user.id().clone(), welcome_credits);
+                self.credit_repo.create_balance(&balance).await?;
+                tracing::info!(
+                    user_id = %user.id().as_uuid(),
+                    "Restored missing credit balance with {} welcome credits",
+                    welcome_credits
+                );
+            }
             return Ok(user);
         }
 

@@ -14,6 +14,8 @@ pub struct SceneCharacterItem {
     pub avatar_url: Option<String>,
     pub appearance_tags: Vec<String>,
     pub personality_tags: Vec<String>,
+    pub personality: String,
+    pub background: String,
 }
 
 pub struct SceneItem {
@@ -82,6 +84,8 @@ impl GetScenesUseCase {
                     avatar_url: character.avatar_url().map(String::from),
                     appearance_tags: character.appearance_tags().to_vec(),
                     personality_tags: character.personality_tags().to_vec(),
+                    personality: character.personality().to_string(),
+                    background: character.background().to_string(),
                 },
             });
         }

@@ -7,7 +7,6 @@ use crate::domain::repositories::{
     CharacterRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
     UserRepository,
 };
-use crate::domain::services::ai_client::{BlockType, ResponseBlock};
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
 use crate::infra::line::{flex_messages, roleplay_flex};
@@ -132,11 +131,14 @@ impl StartSessionUseCase {
             .create_many(&[narrator_message, dialogue_message])
             .await?;
 
-        // 8a. Push session started notification (best-effort)
-        let session_flex = flex_messages::build_session_started_flex(
+        // 8a. Push scene opening card (hero image + narrator)
+        let color_tone = roleplay_flex::extract_color_tone(scene.atmosphere());
+        let session_flex = flex_messages::build_session_opening_flex(
             character.name().as_str(),
             scene.name().as_str(),
-            character.avatar_url(),
+            scene.image_url(),
+            scene.opening_narrator(),
+            &color_tone,
         );
 
         if let Err(e) = self
@@ -155,29 +157,21 @@ impl StartSessionUseCase {
             tracing::warn!(
                 error = %e,
                 line_user_id = %input.line_user_id,
-                "Failed to push session started notification"
+                "Failed to push session opening card"
             );
         }
 
-        // 8b. Push opening Flex message (same format as roleplay messages)
-        let blocks = vec![
-            ResponseBlock {
-                block_type: BlockType::Narration,
-                text: scene.opening_narrator().to_string(),
-            },
-            ResponseBlock {
-                block_type: BlockType::Dialogue,
-                text: scene.opening_dialogue().to_string(),
-            },
-        ];
-        let color_tone = roleplay_flex::extract_color_tone(scene.atmosphere());
-        let bubble = roleplay_flex::build_roleplay_blocks_bubble(
-            &blocks,
+        // 8b. Push opening dialogue (character message with avatar + action spans)
+        let bubble = roleplay_flex::build_roleplay_bubble(
+            "",
+            scene.opening_dialogue(),
+            character.name().as_str(),
+            character.avatar_url(),
             scene.location(),
             scene.time_of_day(),
             &color_tone,
         );
-        let alt_text = roleplay_flex::truncate_alt_text(scene.opening_narrator());
+        let alt_text = roleplay_flex::truncate_alt_text(scene.opening_dialogue());
 
         if let Err(e) = self
             .line_client
@@ -195,7 +189,7 @@ impl StartSessionUseCase {
             tracing::warn!(
                 error = %e,
                 line_user_id = %input.line_user_id,
-                "Failed to push opening Flex message"
+                "Failed to push opening dialogue message"
             );
         }
 

@@ -7,6 +7,7 @@ const PRIMARY: &str = "#F96D4B";
 const PRIMARY_LIGHT: &str = "#FFE8E0";
 
 // Semantic
+#[allow(dead_code)]
 const SUCCESS: &str = "#18B47A";
 const WARNING: &str = "#F5C882";
 const ERROR: &str = "#E5542F";
@@ -25,80 +26,103 @@ const BG_CREAM: &str = "#FFF8F0";
 // Separator
 const SEPARATOR_COLOR: &str = "#E8E4DF";
 
-/// Build a Flex Bubble for session started notification.
-/// Shows character name, scene name, and avatar as a system-style notification.
-pub fn build_session_started_flex(
+/// Build a cinematic Flex Bubble for the session opening.
+/// Shows a large scene image (hero), character/scene info, and opening narrator text.
+pub fn build_session_opening_flex(
     character_name: &str,
     scene_name: &str,
-    character_avatar_url: Option<&str>,
+    scene_image_url: Option<&str>,
+    opening_narrator: &str,
+    color_tone: &str,
 ) -> serde_json::Value {
-    let mut contents = Vec::new();
+    let (accent, gradient_start, gradient_end) =
+        super::roleplay_flex::color_tone_to_colors(color_tone);
 
-    // Character avatar (if available)
-    if let Some(avatar_url) = character_avatar_url {
-        if !avatar_url.is_empty() {
-            contents.push(json!({
-                "type": "image",
-                "url": avatar_url,
-                "size": "80px",
-                "aspectMode": "cover",
-                "aspectRatio": "1:1"
-            }));
-        }
-    }
+    let contents = vec![
+        // Status label
+        json!({
+            "type": "text",
+            "text": "✨ เรื่องราวเริ่มต้นแล้ว",
+            "size": "xs",
+            "color": accent,
+            "weight": "bold"
+        }),
+        // Character name
+        json!({
+            "type": "text",
+            "text": character_name,
+            "weight": "bold",
+            "size": "lg",
+            "color": accent,
+            "margin": "sm"
+        }),
+        // Scene name
+        json!({
+            "type": "text",
+            "text": scene_name,
+            "size": "sm",
+            "color": GRAY_500,
+            "margin": "xs"
+        }),
+        // Accent divider
+        json!({
+            "type": "box",
+            "layout": "vertical",
+            "height": "3px",
+            "backgroundColor": accent,
+            "margin": "lg",
+            "contents": []
+        }),
+        // Opening narrator text
+        json!({
+            "type": "text",
+            "text": opening_narrator,
+            "wrap": true,
+            "size": "sm",
+            "color": "#C8C0B8",
+            "margin": "lg"
+        }),
+    ];
 
-    // Character name
-    contents.push(json!({
-        "type": "text",
-        "text": character_name,
-        "weight": "bold",
-        "size": "xl",
-        "color": PRIMARY,
-        "margin": "md"
-    }));
-
-    // Scene name
-    contents.push(json!({
-        "type": "text",
-        "text": scene_name,
-        "size": "sm",
-        "color": GRAY_500,
-        "margin": "sm"
-    }));
-
-    // Separator
-    contents.push(json!({
-        "type": "separator",
-        "margin": "lg",
-        "color": SEPARATOR_COLOR
-    }));
-
-    // Status text
-    contents.push(json!({
-        "type": "text",
-        "text": "✨ เรื่องราวเริ่มต้นแล้ว",
-        "size": "md",
-        "color": SUCCESS,
-        "weight": "bold",
-        "margin": "lg",
-        "align": "center"
-    }));
-
-    json!({
+    let mut bubble = json!({
         "type": "bubble",
+        "size": "mega",
         "styles": {
             "body": {
-                "backgroundColor": BG_CREAM
+                "backgroundColor": "#00000000"
             }
         },
         "body": {
             "type": "box",
             "layout": "vertical",
-            "contents": contents,
-            "alignItems": "center",
-            "paddingAll": "20px"
+            "background": {
+                "type": "linearGradient",
+                "angle": "180deg",
+                "startColor": gradient_start,
+                "endColor": gradient_end
+            },
+            "paddingAll": "20px",
+            "contents": contents
         }
-    })
+    });
+
+    // Add hero image if available
+    if let Some(url) = scene_image_url {
+        if !url.is_empty() {
+            bubble.as_object_mut().unwrap().insert(
+                "hero".to_string(),
+                json!({
+                    "type": "image",
+                    "url": url,
+                    "size": "full",
+                    "aspectRatio": "20:13",
+                    "aspectMode": "cover"
+                }),
+            );
+        }
+    }
+
+    bubble
 }
 
 /// Build a Flex Bubble for the welcome message + CTA button (follow event).
@@ -235,46 +259,82 @@ mod tests {
     use super::*;
 
     #[test]
-    fn session_started_flex_with_avatar() {
-        let flex = build_session_started_flex(
+    fn session_opening_flex_with_image() {
+        let flex = build_session_opening_flex(
             "มิโกะ",
             "คาเฟ่ลับแห่งความทรงจำ",
-            Some("https://example.com/avatar.png"),
+            Some("https://example.com/scene.png"),
+            "ลมพัดเบาๆ ท้องฟ้าเปลี่ยนสี",
+            "warm_golden",
         );
-        let body = &flex["body"];
-        let contents = body["contents"].as_array().unwrap();
 
-        // image + name + scene + separator + status = 5 elements
+        // Hero image
+        assert_eq!(flex["hero"]["type"], "image");
+        assert_eq!(flex["hero"]["url"], "https://example.com/scene.png");
+        assert_eq!(flex["hero"]["size"], "full");
+        assert_eq!(flex["hero"]["aspectRatio"], "20:13");
+        assert_eq!(flex["hero"]["aspectMode"], "cover");
+
+        // Body contents: label + name + scene + divider + narrator = 5
+        let contents = flex["body"]["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 5);
-        assert_eq!(contents[0]["type"], "image");
-        assert_eq!(contents[0]["url"], "https://example.com/avatar.png");
+        assert_eq!(contents[0]["text"], "✨ เรื่องราวเริ่มต้นแล้ว");
+        assert_eq!(contents[0]["color"], "#FFB74D"); // warm_golden accent
         assert_eq!(contents[1]["text"], "มิโกะ");
-        assert_eq!(contents[1]["color"], "#F96D4B");
+        assert_eq!(contents[1]["color"], "#FFB74D");
         assert_eq!(contents[2]["text"], "คาเฟ่ลับแห่งความทรงจำ");
-        assert_eq!(contents[4]["text"], "✨ เรื่องราวเริ่มต้นแล้ว");
+        assert_eq!(contents[2]["color"], "#9B9186");
+        assert_eq!(contents[3]["height"], "3px");
+        assert_eq!(contents[3]["backgroundColor"], "#FFB74D");
+        assert_eq!(contents[4]["text"], "ลมพัดเบาๆ ท้องฟ้าเปลี่ยนสี");
+        assert_eq!(contents[4]["color"], "#C8C0B8");
 
-        // Cream background
-        assert_eq!(flex["styles"]["body"]["backgroundColor"], "#FFF8F0");
+        // Gradient background
+        assert_eq!(flex["body"]["background"]["type"], "linearGradient");
+        assert_eq!(flex["body"]["background"]["startColor"], "#1a1508");
+        assert_eq!(flex["size"], "mega");
     }
 
     #[test]
-    fn session_started_flex_without_avatar() {
-        let flex = build_session_started_flex("มิโกะ", "คาเฟ่ลับ", None);
-        let contents = flex["body"]["contents"].as_array().unwrap();
+    fn session_opening_flex_without_image() {
+        let flex = build_session_opening_flex("มิโกะ", "คาเฟ่ลับ", None, "ลมพัดเบาๆ", "cool_blue");
 
-        // name + scene + separator + status = 4 elements (no image)
-        assert_eq!(contents.len(), 4);
-        assert_eq!(contents[0]["text"], "มิโกะ");
-        assert_eq!(contents[0]["color"], "#F96D4B");
+        // No hero
+        assert!(flex["hero"].is_null());
+
+        // Body still has 5 elements
+        let contents = flex["body"]["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 5);
+        assert_eq!(contents[0]["text"], "✨ เรื่องราวเริ่มต้นแล้ว");
+        assert_eq!(contents[0]["color"], "#64B5F6"); // cool_blue accent
+
+        // Gradient present
+        assert_eq!(flex["body"]["background"]["type"], "linearGradient");
     }
 
     #[test]
-    fn session_started_flex_empty_avatar_url() {
-        let flex = build_session_started_flex("มิโกะ", "คาเฟ่ลับ", Some(""));
-        let contents = flex["body"]["contents"].as_array().unwrap();
+    fn session_opening_flex_empty_image_url() {
+        let flex =
+            build_session_opening_flex("มิโกะ", "คาเฟ่ลับ", Some(""), "ลมพัดเบาๆ", "warm_golden");
 
-        // Empty URL should be treated same as None
-        assert_eq!(contents.len(), 4);
+        // Empty URL treated same as None
+        assert!(flex["hero"].is_null());
+        let contents = flex["body"]["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 5);
+    }
+
+    #[test]
+    fn session_opening_flex_fallback_color_tone() {
+        let flex = build_session_opening_flex("มิโกะ", "คาเฟ่ลับ", None, "ลมพัดเบาๆ", "unknown_tone");
+
+        let contents = flex["body"]["contents"].as_array().unwrap();
+        // Fallback accent color
+        assert_eq!(contents[0]["color"], "#A0A0A0");
+        assert_eq!(contents[1]["color"], "#A0A0A0");
+
+        // Fallback gradient
+        assert_eq!(flex["body"]["background"]["startColor"], "#111111");
+        assert_eq!(flex["body"]["background"]["endColor"], "#1a1a1a");
     }
 
     #[test]

@@ -414,6 +414,8 @@ pub(crate) struct SceneCharacterResponse {
     pub avatar_url: Option<String>,
     pub appearance_tags: Vec<String>,
     pub personality_tags: Vec<String>,
+    pub personality: String,
+    pub background: String,
 }
 
 impl From<SceneItem> for SceneItemResponse {
@@ -443,6 +445,8 @@ impl From<SceneCharacterItem> for SceneCharacterResponse {
             avatar_url: item.avatar_url,
             appearance_tags: item.appearance_tags,
             personality_tags: item.personality_tags,
+            personality: item.personality,
+            background: item.background,
         }
     }
 }
