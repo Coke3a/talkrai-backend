@@ -10,17 +10,17 @@ static ACTION_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\*([^*]+)\*").
 /// Map a color_tone name to (accent, gradient_start, gradient_end).
 pub fn color_tone_to_colors(tone: &str) -> (&'static str, &'static str, &'static str) {
     match tone {
-        "warm_golden" => ("#FFB74D", "#1a1508", "#1f1a0f"),
-        "cool_blue" => ("#64B5F6", "#0a0f1a", "#0f141f"),
-        "soft_pink" => ("#F48FB1", "#1a0a10", "#1f0f15"),
-        "deep_purple" => ("#B388FF", "#0f0a1a", "#14101f"),
-        "neon_night" => ("#69F0AE", "#0a1a10", "#0f1f15"),
-        "sunset_orange" => ("#FF8A65", "#1a100a", "#1f150f"),
-        "moonlight_silver" => ("#B0BEC5", "#0f1012", "#141517"),
-        "forest_green" => ("#81C784", "#0a1a0c", "#0f1f11"),
-        "storm_gray" => ("#90A4AE", "#0f1113", "#141618"),
-        "cherry_blossom" => ("#F8BBD0", "#1a0a12", "#1f0f17"),
-        _ => ("#A0A0A0", "#111111", "#1a1a1a"),
+        "warm_golden" => ("#FFB74D", "#1a1508", "#1f1a0d"),
+        "cool_blue" => ("#64B5F6", "#141519", "#191a1f"),
+        "soft_pink" => ("#F48FB1", "#1a1412", "#1f1917"),
+        "deep_purple" => ("#B388FF", "#181418", "#1d191e"),
+        "neon_night" => ("#69F0AE", "#141a12", "#191f17"),
+        "sunset_orange" => ("#FF8A65", "#1a1410", "#1f1915"),
+        "moonlight_silver" => ("#B0BEC5", "#171514", "#1c1a19"),
+        "forest_green" => ("#81C784", "#151a10", "#1a1f15"),
+        "storm_gray" => ("#90A4AE", "#161514", "#1b1a19"),
+        "cherry_blossom" => ("#F8BBD0", "#1a1413", "#1f1918"),
+        _ => ("#A0A0A0", "#171513", "#1c1a18"),
     }
 }
 
@@ -121,6 +121,15 @@ pub fn build_roleplay_bubble(
 
     let mut contents: Vec<Value> = Vec::new();
 
+    // Brand accent bar
+    contents.push(json!({
+        "type": "box",
+        "layout": "vertical",
+        "height": "3px",
+        "backgroundColor": "#F96D4B",
+        "contents": []
+    }));
+
     // Narrator zone: header + narrator text
     if has_narrator {
         let time_display = time_period_display(time_of_day);
@@ -128,6 +137,7 @@ pub fn build_roleplay_bubble(
             "type": "box",
             "layout": "horizontal",
             "justifyContent": "space-between",
+            "margin": "lg",
             "contents": [
                 {
                     "type": "text",
@@ -147,12 +157,19 @@ pub fn build_roleplay_bubble(
             ]
         }));
         contents.push(json!({
-            "type": "text",
-            "text": narrator_text,
-            "color": "#A0A0A0",
-            "size": "xs",
-            "wrap": true,
-            "margin": "md"
+            "type": "box",
+            "layout": "vertical",
+            "paddingStart": "8px",
+            "margin": "lg",
+            "contents": [
+                {
+                    "type": "text",
+                    "text": narrator_text,
+                    "color": "#B8AFA5",
+                    "size": "xs",
+                    "wrap": true
+                }
+            ]
         }));
     }
 
@@ -163,7 +180,7 @@ pub fn build_roleplay_bubble(
             "layout": "vertical",
             "height": "3px",
             "backgroundColor": accent,
-            "margin": "lg",
+            "margin": "xl",
             "contents": []
         }));
     }
@@ -171,7 +188,7 @@ pub fn build_roleplay_bubble(
     // Character zone: name label + spans
     if has_character {
         let spans = parse_action_spans(character_text, accent);
-        let name_margin = if has_narrator { "lg" } else { "none" };
+        let name_margin = "lg";
         let has_avatar = avatar_url.filter(|u| !u.is_empty()).is_some();
 
         if has_avatar {
@@ -215,7 +232,7 @@ pub fn build_roleplay_bubble(
             "text": " ",
             "contents": spans,
             "wrap": true,
-            "margin": "sm"
+            "margin": "md"
         }));
     }
 
@@ -236,7 +253,7 @@ pub fn build_roleplay_bubble(
                 "startColor": gradient_start,
                 "endColor": gradient_end
             },
-            "paddingAll": "20px",
+            "paddingAll": "24px",
             "contents": contents
         }
     })
@@ -252,16 +269,42 @@ pub fn build_roleplay_blocks_bubble(
     time_of_day: &str,
     color_tone: &str,
 ) -> Value {
+    let block_details: Vec<String> = blocks.iter().map(|b| {
+        let btype = match b.block_type {
+            BlockType::Narration => "narration",
+            BlockType::Dialogue => "dialogue",
+        };
+        format!("[{}] {}", btype, b.text)
+    }).collect();
+    tracing::info!(
+        block_count = blocks.len(),
+        blocks = %block_details.join(" | "),
+        location = %location,
+        time_of_day = %time_of_day,
+        color_tone = %color_tone,
+        "DEBUG: build_roleplay_blocks_bubble — input"
+    );
+
     let (accent, gradient_start, gradient_end) = color_tone_to_colors(color_tone);
     let time_display = time_period_display(time_of_day);
 
     let mut contents: Vec<Value> = Vec::new();
+
+    // Brand accent bar
+    contents.push(json!({
+        "type": "box",
+        "layout": "vertical",
+        "height": "3px",
+        "backgroundColor": "#F96D4B",
+        "contents": []
+    }));
 
     // Header: location + time
     contents.push(json!({
         "type": "box",
         "layout": "horizontal",
         "justifyContent": "space-between",
+        "margin": "lg",
         "contents": [
             {
                 "type": "text",
@@ -286,12 +329,19 @@ pub fn build_roleplay_blocks_bubble(
         match block.block_type {
             BlockType::Narration => {
                 contents.push(json!({
-                    "type": "text",
-                    "text": block.text,
-                    "color": "#A0A0A0",
-                    "size": "xs",
-                    "wrap": true,
-                    "margin": "md"
+                    "type": "box",
+                    "layout": "vertical",
+                    "paddingStart": "8px",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "text",
+                            "text": block.text,
+                            "color": "#B8AFA5",
+                            "size": "xs",
+                            "wrap": true
+                        }
+                    ]
                 }));
             }
             BlockType::Dialogue => {
@@ -302,13 +352,13 @@ pub fn build_roleplay_blocks_bubble(
                     "size": "sm",
                     "weight": "bold",
                     "wrap": true,
-                    "margin": "md"
+                    "margin": "lg"
                 }));
             }
         }
     }
 
-    json!({
+    let bubble = json!({
         "type": "bubble",
         "size": "mega",
         "styles": {
@@ -325,10 +375,17 @@ pub fn build_roleplay_blocks_bubble(
                 "startColor": gradient_start,
                 "endColor": gradient_end
             },
-            "paddingAll": "20px",
+            "paddingAll": "24px",
             "contents": contents
         }
-    })
+    });
+
+    tracing::info!(
+        bubble_json = %serde_json::to_string(&bubble).unwrap_or_default(),
+        "DEBUG: build_roleplay_blocks_bubble — output Flex JSON"
+    );
+
+    bubble
 }
 
 /// Truncate text to fit LINE's 400-char altText limit.
@@ -345,12 +402,25 @@ pub fn truncate_alt_text(text: &str) -> String {
 pub fn extract_color_tone(atmosphere: &str) -> String {
     let trimmed = atmosphere.trim();
     if !trimmed.starts_with('{') {
+        tracing::info!(
+            atmosphere = %atmosphere,
+            color_tone = "neutral",
+            "DEBUG: extract_color_tone — plain text atmosphere, defaulting to neutral"
+        );
         return "neutral".to_string();
     }
-    serde_json::from_str::<serde_json::Value>(trimmed)
+    let tone = serde_json::from_str::<serde_json::Value>(trimmed)
         .ok()
         .and_then(|v| v.get("color_tone")?.as_str().map(|s| s.to_string()))
-        .unwrap_or_else(|| "neutral".to_string())
+        .unwrap_or_else(|| "neutral".to_string());
+
+    tracing::info!(
+        atmosphere = %atmosphere,
+        color_tone = %tone,
+        "DEBUG: extract_color_tone — extracted"
+    );
+
+    tone
 }
 
 #[cfg(test)]
@@ -362,15 +432,15 @@ mod tests {
         let (accent, gs, ge) = color_tone_to_colors("warm_golden");
         assert_eq!(accent, "#FFB74D");
         assert_eq!(gs, "#1a1508");
-        assert_eq!(ge, "#1f1a0f");
+        assert_eq!(ge, "#1f1a0d");
     }
 
     #[test]
     fn color_tone_fallback() {
         let (accent, gs, ge) = color_tone_to_colors("unknown_tone");
         assert_eq!(accent, "#A0A0A0");
-        assert_eq!(gs, "#111111");
-        assert_eq!(ge, "#1a1a1a");
+        assert_eq!(gs, "#171513");
+        assert_eq!(ge, "#1c1a18");
     }
 
     #[test]
@@ -442,27 +512,35 @@ mod tests {
         assert_eq!(body["layout"], "vertical");
 
         let contents = body["contents"].as_array().unwrap();
-        // header + narrator + divider + character name box + spans
-        assert_eq!(contents.len(), 5);
+        // accent bar + header + narrator + divider + character name box + spans
+        assert_eq!(contents.len(), 6);
+
+        // Brand accent bar
+        assert_eq!(contents[0]["height"], "3px");
+        assert_eq!(contents[0]["backgroundColor"], "#F96D4B");
 
         // Header: location + time
-        assert_eq!(contents[0]["contents"][0]["text"], "📍 ร้านกาแฟ");
-        assert_eq!(contents[0]["contents"][1]["text"], "🌅 เช้า");
+        assert_eq!(contents[1]["contents"][0]["text"], "📍 ร้านกาแฟ");
+        assert_eq!(contents[1]["contents"][1]["text"], "🌅 เช้า");
 
-        // Narrator text (xs size)
-        assert_eq!(contents[1]["text"], "ลมพัดเบาๆ");
-        assert_eq!(contents[1]["size"], "xs");
-        assert_eq!(contents[1]["color"], "#A0A0A0");
+        // Narrator text (wrapped in indented box)
+        assert_eq!(contents[2]["type"], "box");
+        assert_eq!(contents[2]["paddingStart"], "8px");
+        assert_eq!(contents[2]["margin"], "lg");
+        assert_eq!(contents[2]["contents"][0]["text"], "ลมพัดเบาๆ");
+        assert_eq!(contents[2]["contents"][0]["size"], "xs");
+        assert_eq!(contents[2]["contents"][0]["color"], "#B8AFA5");
 
         // Accent divider
-        assert_eq!(contents[2]["height"], "3px");
-        assert_eq!(contents[2]["backgroundColor"], "#FFB74D");
+        assert_eq!(contents[3]["height"], "3px");
+        assert_eq!(contents[3]["backgroundColor"], "#FFB74D");
+        assert_eq!(contents[3]["margin"], "xl");
 
         // Character name box (avatar + text)
-        assert_eq!(contents[3]["type"], "box");
-        assert_eq!(contents[3]["layout"], "horizontal");
-        assert_eq!(contents[3]["margin"], "lg");
-        let name_box = contents[3]["contents"].as_array().unwrap();
+        assert_eq!(contents[4]["type"], "box");
+        assert_eq!(contents[4]["layout"], "horizontal");
+        assert_eq!(contents[4]["margin"], "lg");
+        let name_box = contents[4]["contents"].as_array().unwrap();
         assert_eq!(name_box[0]["type"], "image");
         assert_eq!(name_box[0]["url"], "https://example.com/miko.png");
         assert_eq!(name_box[1]["type"], "text");
@@ -470,10 +548,10 @@ mod tests {
         assert_eq!(name_box[1]["color"], "#FFB74D");
 
         // Character spans
-        assert_eq!(contents[4]["text"], " ");
-        let spans = contents[4]["contents"].as_array().unwrap();
+        assert_eq!(contents[5]["text"], " ");
+        let spans = contents[5]["contents"].as_array().unwrap();
         assert!(spans.len() >= 2);
-        assert_eq!(contents[4]["margin"], "sm");
+        assert_eq!(contents[5]["margin"], "md");
     }
 
     #[test]
@@ -489,10 +567,11 @@ mod tests {
         );
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        // header + narrator (no divider, no spans, no footer)
-        assert_eq!(contents.len(), 2);
-        assert_eq!(contents[0]["contents"][0]["text"], "📍 ร้านกาแฟ");
-        assert_eq!(contents[1]["text"], "ลมพัดเบาๆ");
+        // accent bar + header + narrator (no divider, no spans, no footer)
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["height"], "3px");
+        assert_eq!(contents[1]["contents"][0]["text"], "📍 ร้านกาแฟ");
+        assert_eq!(contents[2]["contents"][0]["text"], "ลมพัดเบาๆ");
     }
 
     #[test]
@@ -501,15 +580,16 @@ mod tests {
             build_roleplay_bubble("", "สวัสดีค่า~", "มิโกะ", None, "ร้านกาแฟ", "เช้าตรู่", "cool_blue");
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        // character name + spans (no header, no narrator, no divider)
-        assert_eq!(contents.len(), 2);
-        assert_eq!(contents[0]["text"], "มิโกะ");
-        assert_eq!(contents[0]["color"], "#64B5F6");
-        assert_eq!(contents[0]["size"], "sm");
-        assert_eq!(contents[0]["weight"], "bold");
-        assert_eq!(contents[0]["margin"], "none");
-        assert_eq!(contents[1]["text"], " ");
-        assert_eq!(contents[1]["margin"], "sm");
+        // accent bar + character name + spans (no header, no narrator, no divider)
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["height"], "3px");
+        assert_eq!(contents[1]["text"], "มิโกะ");
+        assert_eq!(contents[1]["color"], "#64B5F6");
+        assert_eq!(contents[1]["size"], "sm");
+        assert_eq!(contents[1]["weight"], "bold");
+        assert_eq!(contents[1]["margin"], "lg");
+        assert_eq!(contents[2]["text"], " ");
+        assert_eq!(contents[2]["margin"], "md");
     }
 
     #[test]
@@ -525,13 +605,16 @@ mod tests {
         );
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        assert_eq!(contents.len(), 2);
+        assert_eq!(contents.len(), 3);
+
+        // Brand accent bar
+        assert_eq!(contents[0]["height"], "3px");
 
         // Character name box (avatar + text)
-        assert_eq!(contents[0]["type"], "box");
-        assert_eq!(contents[0]["layout"], "horizontal");
-        assert_eq!(contents[0]["margin"], "none");
-        let name_box = contents[0]["contents"].as_array().unwrap();
+        assert_eq!(contents[1]["type"], "box");
+        assert_eq!(contents[1]["layout"], "horizontal");
+        assert_eq!(contents[1]["margin"], "lg");
+        let name_box = contents[1]["contents"].as_array().unwrap();
         assert_eq!(name_box[0]["type"], "image");
         assert_eq!(name_box[0]["url"], "https://example.com/miko.png");
         assert_eq!(name_box[0]["size"], "xxs");
@@ -553,15 +636,18 @@ mod tests {
         );
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        assert_eq!(contents.len(), 2);
+        assert_eq!(contents.len(), 3);
+
+        // Brand accent bar
+        assert_eq!(contents[0]["height"], "3px");
 
         // Falls back to plain text (not box)
-        assert_eq!(contents[0]["type"], "text");
-        assert_eq!(contents[0]["text"], "มิโกะ");
-        assert_eq!(contents[0]["color"], "#64B5F6");
-        assert_eq!(contents[0]["size"], "sm");
-        assert_eq!(contents[0]["weight"], "bold");
-        assert_eq!(contents[0]["margin"], "none");
+        assert_eq!(contents[1]["type"], "text");
+        assert_eq!(contents[1]["text"], "มิโกะ");
+        assert_eq!(contents[1]["color"], "#64B5F6");
+        assert_eq!(contents[1]["size"], "sm");
+        assert_eq!(contents[1]["weight"], "bold");
+        assert_eq!(contents[1]["margin"], "lg");
     }
 
     #[test]
@@ -599,25 +685,31 @@ mod tests {
         assert_eq!(bubble["size"], "mega");
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        // header + 2 blocks = 3
-        assert_eq!(contents.len(), 3);
+        // accent bar + header + 2 blocks = 4
+        assert_eq!(contents.len(), 4);
+
+        // Brand accent bar
+        assert_eq!(contents[0]["height"], "3px");
+        assert_eq!(contents[0]["backgroundColor"], "#F96D4B");
 
         // Header
-        assert_eq!(contents[0]["contents"][0]["text"], "📍 ร้านกาแฟ");
-        assert_eq!(contents[0]["contents"][1]["text"], "🌅 เช้า");
+        assert_eq!(contents[1]["contents"][0]["text"], "📍 ร้านกาแฟ");
+        assert_eq!(contents[1]["contents"][1]["text"], "🌅 เช้า");
 
-        // Narration block
-        assert_eq!(contents[1]["text"], "ลมพัดเบาๆ");
-        assert_eq!(contents[1]["color"], "#A0A0A0");
-        assert_eq!(contents[1]["size"], "xs");
-        assert_eq!(contents[1]["margin"], "md");
+        // Narration block (wrapped in indented box)
+        assert_eq!(contents[2]["type"], "box");
+        assert_eq!(contents[2]["paddingStart"], "8px");
+        assert_eq!(contents[2]["margin"], "lg");
+        assert_eq!(contents[2]["contents"][0]["text"], "ลมพัดเบาๆ");
+        assert_eq!(contents[2]["contents"][0]["color"], "#B8AFA5");
+        assert_eq!(contents[2]["contents"][0]["size"], "xs");
 
         // Dialogue block
-        assert_eq!(contents[2]["text"], "\"สวัสดีค่า~\"");
-        assert_eq!(contents[2]["color"], "#FFFFFF");
-        assert_eq!(contents[2]["size"], "sm");
-        assert_eq!(contents[2]["weight"], "bold");
-        assert_eq!(contents[2]["margin"], "md");
+        assert_eq!(contents[3]["text"], "\"สวัสดีค่า~\"");
+        assert_eq!(contents[3]["color"], "#FFFFFF");
+        assert_eq!(contents[3]["size"], "sm");
+        assert_eq!(contents[3]["weight"], "bold");
+        assert_eq!(contents[3]["margin"], "lg");
     }
 
     #[test]
@@ -644,13 +736,13 @@ mod tests {
         let bubble = build_roleplay_blocks_bubble(&blocks, "สวน", "เย็น", "cool_blue");
 
         let contents = bubble["body"]["contents"].as_array().unwrap();
-        // header + 4 blocks = 5
-        assert_eq!(contents.len(), 5);
+        // accent bar + header + 4 blocks = 6
+        assert_eq!(contents.len(), 6);
 
-        assert_eq!(contents[1]["color"], "#A0A0A0"); // narration
-        assert_eq!(contents[2]["color"], "#FFFFFF"); // dialogue
-        assert_eq!(contents[3]["color"], "#A0A0A0"); // narration
-        assert_eq!(contents[4]["color"], "#FFFFFF"); // dialogue
+        assert_eq!(contents[2]["contents"][0]["color"], "#B8AFA5"); // narration (in box)
+        assert_eq!(contents[3]["color"], "#FFFFFF"); // dialogue
+        assert_eq!(contents[4]["contents"][0]["color"], "#B8AFA5"); // narration (in box)
+        assert_eq!(contents[5]["color"], "#FFFFFF"); // dialogue
     }
 
     #[test]
@@ -670,7 +762,7 @@ mod tests {
 
         let bg = &bubble["body"]["background"];
         assert_eq!(bg["type"], "linearGradient");
-        assert_eq!(bg["startColor"], "#0f0a1a");
-        assert_eq!(bg["endColor"], "#14101f");
+        assert_eq!(bg["startColor"], "#181418");
+        assert_eq!(bg["endColor"], "#1d191e");
     }
 }

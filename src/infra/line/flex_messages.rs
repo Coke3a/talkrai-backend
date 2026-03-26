@@ -333,8 +333,8 @@ mod tests {
         assert_eq!(contents[1]["color"], "#A0A0A0");
 
         // Fallback gradient
-        assert_eq!(flex["body"]["background"]["startColor"], "#111111");
-        assert_eq!(flex["body"]["background"]["endColor"], "#1a1a1a");
+        assert_eq!(flex["body"]["background"]["startColor"], "#171513");
+        assert_eq!(flex["body"]["background"]["endColor"], "#1c1a18");
     }
 
     #[test]
