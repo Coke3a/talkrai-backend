@@ -10,7 +10,7 @@ use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::handlers::app::AppState;
-use crate::handlers::extractors::LiffAuth;
+use crate::handlers::auth::LiffAuth;
 use crate::handlers::routers::error_response::{ApiError, ErrorResponse};
 use crate::usecases::liff::create_payment::CreatePaymentInput;
 use crate::usecases::liff::end_session::EndSessionInput;

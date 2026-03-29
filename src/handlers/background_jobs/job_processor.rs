@@ -5,7 +5,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::value_objects::JobId;
-use crate::handlers::job_dispatcher::JobDispatcher;
+use crate::handlers::background_jobs::job_dispatcher::JobDispatcher;
 
 pub fn spawn(
     dispatcher: Arc<JobDispatcher>,

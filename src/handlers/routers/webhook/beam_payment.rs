@@ -19,7 +19,7 @@ pub(crate) struct BeamWebhookResponse {
 
 #[utoipa::path(
     post,
-    path = "/beam-webhook",
+    path = "/webhook/beam-payment",
     params(
         ("X-Beam-Signature" = String, Header, description = "Beam HMAC-SHA256 signature"),
         ("X-Beam-Event" = String, Header, description = "Beam event type")

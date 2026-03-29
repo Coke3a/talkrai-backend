@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::value_objects::JobId;
-use crate::usecases::background::JobPollerUseCase;
+use crate::usecases::background_jobs::JobPollerUseCase;
 
 pub fn spawn(
     poller_usecase: Arc<JobPollerUseCase>,
@@ -34,7 +34,11 @@ pub fn spawn(
                         Ok(job_ids) => {
                             for job_id in job_ids {
                                 if let Err(e) = tx.try_send(job_id) {
-                                    tracing::warn!(error = %e, "Job poller: channel full, skipping job");
+                                    let skipped_job_id = e.into_inner();
+                                    tracing::warn!(
+                                        job_id = %skipped_job_id.as_uuid(),
+                                        "Job poller: channel full, skipping job"
+                                    );
                                 }
                             }
                         }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::domain::repositories::JobRepository;
 use crate::domain::value_objects::{JobId, JobMode};
-use crate::usecases::process_roleplay_message::{
+use crate::usecases::webhook::process_roleplay_message::{
     ProcessRoleplayMessageInput, ProcessRoleplayMessageUseCase,
 };
 use crate::usecases::UsecaseError;

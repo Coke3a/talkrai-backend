@@ -412,7 +412,13 @@ impl ProcessRoleplayMessageUseCase {
                     tracing::warn!(error = %push_err, "Failed to push error notification to user");
                 }
 
-                tracing::error!(job_id = %job.id().as_uuid(), error = %e, "Job processing failed");
+                tracing::error!(
+                    job_id = %job.id().as_uuid(),
+                    user_id = %job.user_id().as_uuid(),
+                    line_user_id = %job.line_user_id(),
+                    error = %e,
+                    "Job processing failed"
+                );
                 let _ = job.fail(e.to_string());
                 let _ = self.job_repo.update(&job).await;
                 Err(e)

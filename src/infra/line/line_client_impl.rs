@@ -254,6 +254,12 @@ impl LineClient for LineClientImpl {
 
             // Non-retryable errors — bail immediately
             if !Self::is_retryable(status) {
+                tracing::error!(
+                    status,
+                    line_user_id = %body.to,
+                    response_body = %message,
+                    "LINE push_messages non-retryable error"
+                );
                 return Err(LineClientError::ApiError { status, message });
             }
 
@@ -265,9 +271,15 @@ impl LineClient for LineClientImpl {
             last_err = Some(LineClientError::ApiError { status, message });
         }
 
-        Err(last_err.unwrap_or_else(|| {
+        let final_err = last_err.unwrap_or_else(|| {
             LineClientError::NetworkError(anyhow::anyhow!("push_messages: all retries exhausted"))
-        }))
+        });
+        tracing::error!(
+            line_user_id = %body.to,
+            error = %final_err,
+            "LINE push_messages failed after all retries"
+        );
+        Err(final_err)
     }
 
     async fn show_loading_animation(
@@ -295,6 +307,12 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                line_user_id = %body.chat_id,
+                response_body = %message,
+                "LINE show_loading_animation failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -334,6 +352,11 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                response_body = %message,
+                "LINE reply_messages failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -356,6 +379,11 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                response_body = %message,
+                "LINE LIFF token verification failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -386,6 +414,11 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                response_body = %message,
+                "LINE user profile fetch failed during LIFF verification"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -419,6 +452,12 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                line_user_id,
+                response_body = %message,
+                "LINE get_profile failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -460,6 +499,13 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                line_user_id,
+                rich_menu_id,
+                response_body = %message,
+                "LINE link_rich_menu failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 
@@ -483,6 +529,12 @@ impl LineClient for LineClientImpl {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Failed to read error body".into());
+            tracing::error!(
+                status,
+                line_user_id,
+                response_body = %message,
+                "LINE unlink_rich_menu failed"
+            );
             return Err(LineClientError::ApiError { status, message });
         }
 

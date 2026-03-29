@@ -102,7 +102,28 @@ impl CreatePaymentUseCase {
             redirect_url: Some(final_redirect_url),
         };
 
-        let beam_output = self.beam_client.create_payment_link(beam_input).await?;
+        tracing::info!(
+            order_id = %order_id,
+            user_id = %user.id().as_uuid(),
+            package_id = %input.package_id,
+            amount_satang = beam_input.amount_satang,
+            "Creating Beam payment link"
+        );
+
+        let beam_output = self
+            .beam_client
+            .create_payment_link(beam_input)
+            .await
+            .map_err(|e| {
+                tracing::error!(
+                    order_id = %order_id,
+                    user_id = %user.id().as_uuid(),
+                    package_id = %input.package_id,
+                    error = %e,
+                    "Beam payment link creation failed"
+                );
+                UsecaseError::from(e)
+            })?;
 
         // 6. Update order with Beam payment link ID
         self.payment_order_repo

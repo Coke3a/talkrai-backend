@@ -4,7 +4,7 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
-use crate::usecases::background::StaleJobCleanupUseCase;
+use crate::usecases::background_jobs::StaleJobCleanupUseCase;
 
 pub fn spawn(
     cleanup_usecase: Arc<StaleJobCleanupUseCase>,

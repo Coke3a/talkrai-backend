@@ -19,7 +19,7 @@ pub(crate) struct WebhookResponse {
 
 #[utoipa::path(
     post,
-    path = "/webhook",
+    path = "/webhook/line-message",
     params(
         ("x-line-signature" = String, Header, description = "LINE webhook signature for request verification")
     ),

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use async_trait::async_trait;
 use base64::Engine;
 use reqwest::Client;
@@ -21,8 +23,14 @@ impl BeamClientImpl {
         let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
         let auth_header = format!("Basic {}", encoded);
 
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .expect("Failed to build Beam HTTP client");
+
         Self {
-            client: Client::new(),
+            client,
             auth_header,
         }
     }
@@ -79,6 +87,14 @@ impl BeamClient for BeamClientImpl {
             redirect_url: input.redirect_url,
         };
 
+        let reference_id = body.order.reference_id.clone();
+
+        tracing::info!(
+            reference_id = %reference_id,
+            amount_satang = body.order.net_amount,
+            "Sending payment link request to Beam"
+        );
+
         let response = self
             .client
             .post(format!("{}/api/v1/payment-links", BEAM_API_BASE))
@@ -87,7 +103,14 @@ impl BeamClient for BeamClientImpl {
             .json(&body)
             .send()
             .await
-            .map_err(|e| BeamClientError::RequestFailed(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(
+                    reference_id = %reference_id,
+                    error = %e,
+                    "Beam API network error"
+                );
+                BeamClientError::RequestFailed(e.to_string())
+            })?;
 
         let status = response.status().as_u16();
 
@@ -107,13 +130,33 @@ impl BeamClient for BeamClientImpl {
                 .or(error_body.message)
                 .unwrap_or_else(|| "Unknown Beam API error".to_string());
 
+            tracing::error!(
+                status,
+                reference_id = %reference_id,
+                error_message = %message,
+                "Beam API error response"
+            );
+
             return Err(BeamClientError::ApiError { status, message });
         }
 
         let result = response
             .json::<CreatePaymentLinkResponse>()
             .await
-            .map_err(|e| BeamClientError::ParseError(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(
+                    reference_id = %reference_id,
+                    error = %e,
+                    "Failed to parse Beam API success response"
+                );
+                BeamClientError::ParseError(e.to_string())
+            })?;
+
+        tracing::info!(
+            reference_id = %reference_id,
+            payment_link_id = %result.id,
+            "Beam payment link created successfully"
+        );
 
         Ok(CreatePaymentLinkOutput {
             payment_link_id: result.id,

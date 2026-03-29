@@ -61,8 +61,16 @@ impl ProcessBeamWebhookUseCase {
             return Ok(());
         }
 
-        let payload: BeamWebhookPayload = serde_json::from_slice(body)
-            .map_err(|e| UsecaseError::Validation(format!("Invalid webhook payload: {}", e)))?;
+        let payload: BeamWebhookPayload = serde_json::from_slice(body).map_err(|e| {
+            let body_preview = String::from_utf8_lossy(&body[..body.len().min(500)]);
+            tracing::error!(
+                error = %e,
+                event_type,
+                body_preview = %body_preview,
+                "Failed to parse Beam webhook payload"
+            );
+            UsecaseError::Validation(format!("Invalid webhook payload: {}", e))
+        })?;
 
         tracing::info!(
             payment_link_id = %payload.payment_link_id,

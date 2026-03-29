@@ -129,7 +129,19 @@ impl ReceiveWebhookUseCase {
             match self.route_event(event).await {
                 Ok(Some(_job_id)) => {}
                 Ok(None) => {}
-                Err(e) => tracing::error!(error = %e, "Failed to process webhook event"),
+                Err(e) => {
+                    let line_user_id = event
+                        .source
+                        .as_ref()
+                        .and_then(|s| s.user_id.as_deref())
+                        .unwrap_or("unknown");
+                    tracing::error!(
+                        error = %e,
+                        event_type = %event.event_type,
+                        line_user_id,
+                        "Failed to process webhook event"
+                    );
+                }
             }
         }
 

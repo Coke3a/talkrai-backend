@@ -31,9 +31,9 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::domain::services::beam_client::BeamClient;
 use crate::handlers::openapi::ApiDoc;
-use crate::handlers::routers::{beam_webhook, health_check, liff, ready_check, webhook};
+use crate::handlers::routers::{default, liff, webhook};
 use crate::infra::db::postgres_connection::PgPool;
-use crate::usecases::background::{JobPollerUseCase, StaleJobCleanupUseCase};
+use crate::usecases::background_jobs::{JobPollerUseCase, StaleJobCleanupUseCase};
 use crate::usecases::liff::create_payment::CreatePaymentUseCase;
 use crate::usecases::liff::end_session::EndSessionUseCase;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceUseCase;
@@ -44,9 +44,9 @@ use crate::usecases::liff::get_profile::GetProfileUseCase;
 use crate::usecases::liff::get_scenes::GetScenesUseCase;
 use crate::usecases::liff::get_tags::GetTagsUseCase;
 use crate::usecases::liff::start_session::StartSessionUseCase;
-use crate::usecases::process_beam_webhook::ProcessBeamWebhookUseCase;
-use crate::usecases::process_roleplay_message::ProcessRoleplayMessageUseCase;
-use crate::usecases::receive_webhook::ReceiveWebhookUseCase;
+use crate::usecases::webhook::process_beam_webhook::ProcessBeamWebhookUseCase;
+use crate::usecases::webhook::process_roleplay_message::ProcessRoleplayMessageUseCase;
+use crate::usecases::webhook::receive_webhook::ReceiveWebhookUseCase;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -248,11 +248,23 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
         ));
 
     let router = Router::new()
-        .route("/webhook", post(webhook::webhook_handler))
-        .route("/beam-webhook", post(beam_webhook::beam_webhook_handler))
+        .route(
+            "/webhook/line-message",
+            post(webhook::line_message::webhook_handler),
+        )
+        .route(
+            "/webhook/beam-payment",
+            post(webhook::beam_payment::beam_webhook_handler),
+        )
         .nest("/api", liff::router())
-        .route("/health-check", get(health_check::health_check_handler))
-        .route("/ready-check", get(ready_check::ready_check_handler));
+        .route(
+            "/health-check",
+            get(default::health_check::health_check_handler),
+        )
+        .route(
+            "/ready-check",
+            get(default::ready_check::ready_check_handler),
+        );
 
     let router = if config.server.enable_swagger {
         tracing::info!("Swagger UI enabled at /swagger-ui/");
@@ -288,22 +300,24 @@ fn spawn_background_tasks(
         config.line.liff_base_url.clone(),
     ));
 
-    let dispatcher = Arc::new(crate::handlers::job_dispatcher::JobDispatcher::new(
-        Arc::clone(&repos.job_repo),
-        process_usecase,
-    ));
+    let dispatcher = Arc::new(
+        crate::handlers::background_jobs::job_dispatcher::JobDispatcher::new(
+            Arc::clone(&repos.job_repo),
+            process_usecase,
+        ),
+    );
 
     let poller_usecase = Arc::new(JobPollerUseCase::new(Arc::clone(&repos.job_repo)));
     let cleanup_usecase = Arc::new(StaleJobCleanupUseCase::new(Arc::clone(&repos.job_repo)));
 
-    let h1 = crate::handlers::job_processor::spawn(
+    let h1 = crate::handlers::background_jobs::job_processor::spawn(
         dispatcher,
         job_receiver,
         cancel.clone(),
         config.background_tasks.max_concurrent_jobs,
     );
 
-    let h2 = crate::handlers::job_poller::spawn(
+    let h2 = crate::handlers::background_jobs::job_poller::spawn(
         poller_usecase,
         job_sender,
         cancel.clone(),
@@ -311,7 +325,7 @@ fn spawn_background_tasks(
         config.background_tasks.poll_batch_size,
     );
 
-    let h3 = crate::handlers::stale_job_cleanup::spawn(
+    let h3 = crate::handlers::background_jobs::stale_job_cleanup::spawn(
         cleanup_usecase,
         cancel.clone(),
         config.background_tasks.cleanup_interval_secs,

@@ -1,14 +1,14 @@
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, Http, HttpAuthScheme, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
-use crate::handlers::routers::{health_check, liff, ready_check, webhook};
+use crate::handlers::routers::{default, liff, webhook};
 
 #[derive(OpenApi)]
 #[openapi(
     paths(
-        health_check::health_check_handler,
-        ready_check::ready_check_handler,
-        webhook::webhook_handler,
+        default::health_check::health_check_handler,
+        default::ready_check::ready_check_handler,
+        webhook::line_message::webhook_handler,
         liff::start_session_handler,
         liff::end_session_handler,
         liff::get_current_session_handler,
@@ -19,9 +19,9 @@ use crate::handlers::routers::{health_check, liff, ready_check, webhook};
         liff::get_scenes_handler,
     ),
     components(schemas(
-        health_check::HealthResponse,
-        ready_check::ReadyResponse,
-        webhook::WebhookResponse,
+        default::health_check::HealthResponse,
+        default::ready_check::ReadyResponse,
+        webhook::line_message::WebhookResponse,
         liff::StartSessionRequest,
         liff::StartSessionResponse,
         liff::EndSessionResponse,
