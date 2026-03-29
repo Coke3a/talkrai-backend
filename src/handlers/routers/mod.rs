@@ -1,3 +1,4 @@
+pub mod beam_webhook;
 pub mod error_response;
 pub mod health_check;
 pub mod liff;

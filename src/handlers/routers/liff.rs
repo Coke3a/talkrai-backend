@@ -12,10 +12,12 @@ use uuid::Uuid;
 use crate::handlers::app::AppState;
 use crate::handlers::extractors::LiffAuth;
 use crate::handlers::routers::error_response::{ApiError, ErrorResponse};
+use crate::usecases::liff::create_payment::CreatePaymentInput;
 use crate::usecases::liff::end_session::EndSessionInput;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceInput;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsInput;
 use crate::usecases::liff::get_current_session::GetCurrentSessionInput;
+use crate::usecases::liff::get_payment_status::GetPaymentStatusInput;
 use crate::usecases::liff::get_profile::GetProfileInput;
 use crate::usecases::liff::get_scenes::{SceneCharacterItem, SceneItem};
 use crate::usecases::liff::get_tags::TagItem;
@@ -32,6 +34,8 @@ pub fn router() -> Router<AppState> {
             "/credits/transactions",
             get(get_credit_transactions_handler),
         )
+        .route("/payments/create", post(create_payment_handler))
+        .route("/payments/status", get(get_payment_status_handler))
         .route("/tags", get(get_tags_handler))
         .route("/scenes", get(get_scenes_handler))
 }
@@ -471,6 +475,99 @@ pub(crate) async fn get_scenes_handler(
         .collect();
 
     Ok((StatusCode::OK, Json(ScenesResponse { scenes })))
+}
+
+// ── Create Payment ────────────────────────────────────────
+
+#[derive(Deserialize, ToSchema)]
+pub(crate) struct CreatePaymentRequest {
+    package_id: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatePaymentResponse {
+    pub payment_url: String,
+    pub order_id: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/payments/create",
+    request_body = CreatePaymentRequest,
+    responses(
+        (status = 200, description = "Payment link created", body = CreatePaymentResponse),
+        (status = 400, description = "Validation error", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn create_payment_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+    Json(body): Json<CreatePaymentRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let input = CreatePaymentInput {
+        line_user_id: liff.line_user_id,
+        package_id: body.package_id,
+        redirect_base_url: state.config.line.liff_base_url.clone(),
+    };
+
+    let output = state.create_payment_usecase.execute(input).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(CreatePaymentResponse {
+            payment_url: output.payment_url,
+            order_id: output.order_id,
+        }),
+    ))
+}
+
+// ── Get Payment Status ───────────────────────────────────
+
+#[derive(Deserialize, IntoParams)]
+pub(crate) struct PaymentStatusQuery {
+    pub order_id: Uuid,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct PaymentStatusResponse {
+    pub status: String,
+    pub credits_amount: i32,
+    pub price_thb: i32,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/payments/status",
+    params(PaymentStatusQuery),
+    responses(
+        (status = 200, description = "Payment order status", body = PaymentStatusResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Order not found", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn get_payment_status_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+    Query(query): Query<PaymentStatusQuery>,
+) -> Result<impl IntoResponse, ApiError> {
+    let input = GetPaymentStatusInput {
+        line_user_id: liff.line_user_id,
+        order_id: query.order_id,
+    };
+
+    let output = state.get_payment_status_usecase.execute(input).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(PaymentStatusResponse {
+            status: output.status,
+            credits_amount: output.credits_amount,
+            price_thb: output.price_thb,
+        }),
+    ))
 }
 
 #[cfg(test)]

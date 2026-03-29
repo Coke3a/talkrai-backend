@@ -394,8 +394,11 @@ impl ProcessRoleplayMessageUseCase {
                             sender_icon_url: String::new(),
                         }]
                     } else {
-                        vec![LineMessage::Text {
-                            text: "ขอโทษนะคะ ระบบขัดข้องชั่วคราว ลองส่งข้อความมาใหม่อีกครั้งนะคะ 🙏".into(),
+                        let bubble = flex_messages::build_system_error_flex();
+                        vec![LineMessage::Flex {
+                            alt_text: "ขอโทษนะคะ ระบบขัดข้องชั่วคราว ลองส่งข้อความมาใหม่อีกครั้งนะคะ 🙏"
+                                .into(),
+                            contents: bubble,
                             sender_name: "TalkRai".into(),
                             sender_icon_url: String::new(),
                         }]
@@ -463,9 +466,26 @@ impl ProcessRoleplayMessageUseCase {
             character_opt.ok_or_else(|| UsecaseError::NotFound("Character not found".into()))?;
         let scene = scene_opt.ok_or_else(|| UsecaseError::NotFound("Scene not found".into()))?;
 
+        tracing::info!(
+            job_id = %job.id().as_uuid(),
+            session_id = %session.id().as_uuid(),
+            character_id = %session.character_id().as_uuid(),
+            scene_id = %session.scene_id().as_uuid(),
+            user_id = %session.user_id().as_uuid(),
+            character_name = %character.name().as_str(),
+            "DEBUG: Step 2 — context loaded"
+        );
+
         // 3. Check credits
         let credit_balance = credit_balance_opt
             .ok_or_else(|| UsecaseError::NotFound("Credit balance not found".into()))?;
+
+        tracing::info!(
+            job_id = %job.id().as_uuid(),
+            user_id = %session.user_id().as_uuid(),
+            credit_balance = credit_balance.balance(),
+            "DEBUG: Step 3 — credit check"
+        );
 
         if !credit_balance.has_sufficient_credits(2) {
             return Err(UsecaseError::InsufficientCredits);
@@ -475,17 +495,104 @@ impl ProcessRoleplayMessageUseCase {
         let system_prompt = build_system_prompt(&character, &scene, &session);
         let ai_messages = build_ai_messages(&recent_messages, job.user_message());
 
-        // 6. Call AI
-        let ai_response = self
-            .ai_client
-            .generate_roleplay_response(AiRoleplayRequest {
-                system_prompt,
-                messages: ai_messages,
-                max_tokens: cfg.ai_max_tokens,
-            })
-            .await?;
+        let msg_roles: Vec<&str> = ai_messages.iter().map(|m| m.role.as_str()).collect();
+        tracing::info!(
+            job_id = %job.id().as_uuid(),
+            system_prompt_len = system_prompt.len(),
+            system_prompt_preview = %system_prompt.chars().take(300).collect::<String>(),
+            ai_message_count = ai_messages.len(),
+            message_roles = %format!("{:?}", msg_roles),
+            user_message = %job.user_message(),
+            max_tokens = cfg.ai_max_tokens,
+            "DEBUG: Step 5 — prompts built"
+        );
 
-        // 7. Save messages: user + character (blocks JSON + mood)
+        // 6. Call AI with validation + retry (max 3 attempts)
+        const MAX_LLM_RETRIES: u32 = 3;
+        let mut validated_response = None;
+
+        for attempt in 1..=MAX_LLM_RETRIES {
+            tracing::info!(
+                job_id = %job.id().as_uuid(),
+                attempt,
+                "DEBUG: Step 6 — calling LLM..."
+            );
+
+            let response = self
+                .ai_client
+                .generate_roleplay_response(AiRoleplayRequest {
+                    system_prompt: system_prompt.clone(),
+                    messages: ai_messages.clone(),
+                    max_tokens: cfg.ai_max_tokens,
+                })
+                .await?;
+
+            let block_details: Vec<String> = response
+                .blocks
+                .iter()
+                .map(|b| {
+                    let btype = match b.block_type {
+                        crate::domain::services::ai_client::BlockType::Narration => "narration",
+                        crate::domain::services::ai_client::BlockType::Dialogue => "dialogue",
+                    };
+                    format!("[{}] {}", btype, b.text)
+                })
+                .collect();
+            tracing::info!(
+                job_id = %job.id().as_uuid(),
+                attempt,
+                block_count = response.blocks.len(),
+                blocks = %block_details.join(" | "),
+                mood = ?response.mood,
+                current_location = ?response.current_location,
+                scene_time = ?response.scene_time,
+                content_text = %response.content_text(),
+                "DEBUG: Step 6 — LLM response received"
+            );
+
+            match crate::infra::ai::response::validate_ai_response(&response) {
+                Ok(()) => {
+                    validated_response = Some(response);
+                    break;
+                }
+                Err(reason) => {
+                    tracing::error!(
+                        job_id = %job.id().as_uuid(),
+                        attempt,
+                        max_attempts = MAX_LLM_RETRIES,
+                        reason = %reason,
+                        raw_content = %response.content_text(),
+                        mood = ?response.mood,
+                        block_count = response.blocks.len(),
+                        blocks = %block_details.join(" | "),
+                        "LLM response validation failed — invalid response from AI"
+                    );
+                }
+            }
+        }
+
+        let ai_response = match validated_response {
+            Some(r) => r,
+            None => {
+                tracing::error!(
+                    job_id = %job.id().as_uuid(),
+                    session_id = %session.id().as_uuid(),
+                    retries_exhausted = MAX_LLM_RETRIES,
+                    "LLM response validation failed after all retries — sending fallback to user"
+                );
+                return Err(UsecaseError::AiResponseInvalid);
+            }
+        };
+
+        // 7. Save messages
+        tracing::info!(
+            job_id = %job.id().as_uuid(),
+            user_message = %job.user_message(),
+            character_content = %ai_response.content_text(),
+            character_mood = ?ai_response.mood,
+            "DEBUG: Step 7 — saving messages"
+        );
+
         let user_msg = Message::new(
             session.id().clone(),
             MessageRole::User,
@@ -510,6 +617,16 @@ impl ProcessRoleplayMessageUseCase {
             .await?;
 
         // 9. Update session
+        tracing::info!(
+            job_id = %job.id().as_uuid(),
+            session_id = %session.id().as_uuid(),
+            mood_update = ?ai_response.mood,
+            location_update = ?ai_response.current_location,
+            time_update = ?ai_response.scene_time,
+            current_message_count = session.message_count(),
+            "DEBUG: Step 9 — updating session"
+        );
+
         let mut session = session;
         if let Some(mood_str) = &ai_response.mood {
             if let Ok(mood) = CharacterMood::from_str(mood_str) {
@@ -542,6 +659,17 @@ impl ProcessRoleplayMessageUseCase {
             let time_of_day = session.scene_time().unwrap_or_else(|| scene.time_of_day());
             let color_tone = roleplay_flex::extract_color_tone(scene.atmosphere());
 
+            tracing::info!(
+                job_id = %job.id().as_uuid(),
+                location = %location,
+                time_of_day = %time_of_day,
+                color_tone = %color_tone,
+                atmosphere_raw = %scene.atmosphere(),
+                sender_name = %character.name().as_str(),
+                sender_icon_url = %character.avatar_url().unwrap_or_default(),
+                "DEBUG: Step 10 — building Flex bubble"
+            );
+
             let bubble = roleplay_flex::build_roleplay_blocks_bubble(
                 &ai_response.blocks,
                 location,
@@ -550,9 +678,17 @@ impl ProcessRoleplayMessageUseCase {
             );
 
             let alt_source = &ai_response.blocks[0].text;
+            let alt_text = roleplay_flex::truncate_alt_text(alt_source);
+
+            tracing::info!(
+                job_id = %job.id().as_uuid(),
+                alt_text = %alt_text,
+                flex_json = %serde_json::to_string(&bubble).unwrap_or_default(),
+                "DEBUG: Step 10 — pushing LINE Flex message"
+            );
 
             let line_messages = vec![LineMessage::Flex {
-                alt_text: roleplay_flex::truncate_alt_text(alt_source),
+                alt_text,
                 contents: bubble,
                 sender_name: character.name().as_str().to_string(),
                 sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),

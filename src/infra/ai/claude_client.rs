@@ -93,7 +93,7 @@ impl AiClient for ClaudeClient {
             tool_choice: Some(serde_json::json!({"type": "any"})),
         };
 
-        tracing::debug!(
+        tracing::info!(
             provider = "claude",
             model = CLAUDE_MODEL,
             max_tokens = body.max_tokens,
@@ -122,7 +122,7 @@ impl AiClient for ClaudeClient {
             .await
             .map_err(|e| AiClientError::NetworkError(e.into()))?;
 
-        tracing::debug!(
+        tracing::info!(
             provider = "claude",
             status,
             body = %response_text,
@@ -189,7 +189,7 @@ impl AiClient for ClaudeClient {
             tool_choice: None,
         };
 
-        tracing::debug!(
+        tracing::info!(
             provider = "claude",
             model = CLAUDE_MODEL,
             max_tokens = body.max_tokens,
@@ -218,7 +218,7 @@ impl AiClient for ClaudeClient {
             .await
             .map_err(|e| AiClientError::NetworkError(e.into()))?;
 
-        tracing::debug!(
+        tracing::info!(
             provider = "claude",
             status,
             body = %response_text,

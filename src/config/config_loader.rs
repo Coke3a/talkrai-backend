@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 
 use super::{
-    AiConfig, BackgroundTasksConfig, DatabaseConfig, DotEnvyConfig, LineConfig, ServerConfig,
+    AiConfig, BackgroundTasksConfig, BeamConfig, DatabaseConfig, DotEnvyConfig, LineConfig,
+    ServerConfig,
 };
 
 pub fn load() -> Result<DotEnvyConfig> {
@@ -49,6 +50,12 @@ pub fn load() -> Result<DotEnvyConfig> {
         default_provider: env_or("DEFAULT_LLM_PROVIDER", "claude"),
     };
 
+    let beam = BeamConfig {
+        merchant_id: std::env::var("BEAM_MERCHANT_ID").context("BEAM_MERCHANT_ID is required")?,
+        api_key: std::env::var("BEAM_API_KEY").context("BEAM_API_KEY is required")?,
+        hmac_key: std::env::var("BEAM_HMAC_KEY").context("BEAM_HMAC_KEY is required")?,
+    };
+
     let bg_defaults = BackgroundTasksConfig::default();
     let background_tasks = BackgroundTasksConfig {
         job_channel_capacity: env_or(
@@ -91,6 +98,7 @@ pub fn load() -> Result<DotEnvyConfig> {
         database,
         line,
         ai,
+        beam,
         background_tasks,
     })
 }

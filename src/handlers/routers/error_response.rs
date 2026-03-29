@@ -35,6 +35,14 @@ impl IntoResponse for ApiError {
             ),
             UsecaseError::LineError(msg) => (StatusCode::BAD_GATEWAY, "LINE_ERROR", msg.clone()),
             UsecaseError::AiError(msg) => (StatusCode::BAD_GATEWAY, "AI_ERROR", msg.clone()),
+            UsecaseError::AiResponseInvalid => (
+                StatusCode::BAD_GATEWAY,
+                "AI_RESPONSE_INVALID",
+                "AI response invalid after all retries".to_string(),
+            ),
+            UsecaseError::PaymentError(msg) => {
+                (StatusCode::BAD_GATEWAY, "PAYMENT_ERROR", msg.clone())
+            }
             UsecaseError::Infra(err) => {
                 tracing::error!(error = %err, "Internal server error");
                 (

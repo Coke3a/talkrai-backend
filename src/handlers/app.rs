@@ -20,7 +20,8 @@ use tracing_subscriber::EnvFilter;
 use crate::config::DotEnvyConfig;
 use crate::domain::repositories::{
     AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
-    RoleplaySessionRepository, SceneRepository, TagDefinitionRepository, UserRepository,
+    PaymentOrderRepository, RoleplaySessionRepository, SceneRepository, TagDefinitionRepository,
+    UserRepository,
 };
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
@@ -28,18 +29,22 @@ use crate::domain::value_objects::JobId;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::domain::services::beam_client::BeamClient;
 use crate::handlers::openapi::ApiDoc;
-use crate::handlers::routers::{health_check, liff, ready_check, webhook};
+use crate::handlers::routers::{beam_webhook, health_check, liff, ready_check, webhook};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::usecases::background::{JobPollerUseCase, StaleJobCleanupUseCase};
+use crate::usecases::liff::create_payment::CreatePaymentUseCase;
 use crate::usecases::liff::end_session::EndSessionUseCase;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceUseCase;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsUseCase;
 use crate::usecases::liff::get_current_session::GetCurrentSessionUseCase;
+use crate::usecases::liff::get_payment_status::GetPaymentStatusUseCase;
 use crate::usecases::liff::get_profile::GetProfileUseCase;
 use crate::usecases::liff::get_scenes::GetScenesUseCase;
 use crate::usecases::liff::get_tags::GetTagsUseCase;
 use crate::usecases::liff::start_session::StartSessionUseCase;
+use crate::usecases::process_beam_webhook::ProcessBeamWebhookUseCase;
 use crate::usecases::process_roleplay_message::ProcessRoleplayMessageUseCase;
 use crate::usecases::receive_webhook::ReceiveWebhookUseCase;
 
@@ -59,6 +64,9 @@ pub struct AppState {
     pub get_current_session_usecase: Arc<GetCurrentSessionUseCase>,
     pub get_tags_usecase: Arc<GetTagsUseCase>,
     pub get_scenes_usecase: Arc<GetScenesUseCase>,
+    pub create_payment_usecase: Arc<CreatePaymentUseCase>,
+    pub get_payment_status_usecase: Arc<GetPaymentStatusUseCase>,
+    pub process_beam_webhook_usecase: Arc<ProcessBeamWebhookUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -69,6 +77,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         repos,
         line_client,
         ai_client,
+        beam_client,
         config_repo,
     } = infra;
 
@@ -134,6 +143,23 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&repos.character_repo),
     ));
 
+    let create_payment_usecase = Arc::new(CreatePaymentUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.payment_order_repo),
+        Arc::clone(&beam_client),
+    ));
+
+    let get_payment_status_usecase = Arc::new(GetPaymentStatusUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.payment_order_repo),
+    ));
+
+    let process_beam_webhook_usecase = Arc::new(ProcessBeamWebhookUseCase::new(
+        Arc::clone(&repos.payment_order_repo),
+        Arc::clone(&repos.credit_repo),
+        config.beam.hmac_key.clone(),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -149,6 +175,9 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         get_current_session_usecase,
         get_tags_usecase,
         get_scenes_usecase,
+        create_payment_usecase,
+        get_payment_status_usecase,
+        process_beam_webhook_usecase,
     };
 
     let app = build_router(state, &config);
@@ -220,6 +249,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
 
     let router = Router::new()
         .route("/webhook", post(webhook::webhook_handler))
+        .route("/beam-webhook", post(beam_webhook::beam_webhook_handler))
         .nest("/api", liff::router())
         .route("/health-check", get(health_check::health_check_handler))
         .route("/ready-check", get(ready_check::ready_check_handler));
@@ -326,6 +356,7 @@ struct Repositories {
     scene_repo: Arc<dyn SceneRepository>,
     message_repo: Arc<dyn MessageRepository>,
     credit_repo: Arc<dyn CreditRepository>,
+    payment_order_repo: Arc<dyn PaymentOrderRepository>,
     tag_def_repo: Arc<dyn TagDefinitionRepository>,
 }
 
@@ -333,6 +364,7 @@ struct Infrastructure {
     repos: Repositories,
     line_client: Arc<dyn LineClient>,
     ai_client: Arc<dyn AiClient>,
+    beam_client: Arc<dyn BeamClient>,
     config_repo: Arc<dyn AppConfigRepository>,
 }
 
@@ -344,7 +376,7 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
         AppConfigPostgres, CachedAppConfigRepository, CharacterPostgres, CreditPostgres,
-        JobPostgres, MessagePostgres, RoleplaySessionPostgres, ScenePostgres,
+        JobPostgres, MessagePostgres, PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres,
         TagDefinitionPostgres, UserPostgres,
     };
 
@@ -356,6 +388,7 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         message_repo: Arc::new(MessagePostgres::new(Arc::clone(db_pool))),
         job_repo: Arc::new(JobPostgres::new(Arc::clone(db_pool))),
         credit_repo: Arc::new(CreditPostgres::new(Arc::clone(db_pool))),
+        payment_order_repo: Arc::new(PaymentOrderPostgres::new(Arc::clone(db_pool))),
         tag_def_repo: Arc::new(TagDefinitionPostgres::new(Arc::clone(db_pool))),
     };
 
@@ -385,10 +418,16 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         config.ai.default_provider.clone(),
     ));
 
+    let beam_client: Arc<dyn BeamClient> = Arc::new(crate::infra::beam::BeamClientImpl::new(
+        config.beam.merchant_id.clone(),
+        config.beam.api_key.clone(),
+    ));
+
     Infrastructure {
         repos,
         line_client,
         ai_client,
+        beam_client,
         config_repo,
     }
 }

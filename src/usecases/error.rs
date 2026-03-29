@@ -3,6 +3,7 @@ use thiserror::Error;
 use crate::domain::error::DomainError;
 use crate::domain::repositories::RepoError;
 use crate::domain::services::ai_client_error::AiClientError;
+use crate::domain::services::beam_client_error::BeamClientError;
 use crate::domain::services::line_client_error::LineClientError;
 
 #[derive(Debug, Error)]
@@ -21,6 +22,12 @@ pub enum UsecaseError {
 
     #[error("AI processing error: {0}")]
     AiError(String),
+
+    #[error("AI response invalid after all retries")]
+    AiResponseInvalid,
+
+    #[error("Payment error: {0}")]
+    PaymentError(String),
 
     #[error("Infrastructure error")]
     Infra(#[source] anyhow::Error),
@@ -54,5 +61,11 @@ impl From<LineClientError> for UsecaseError {
 impl From<AiClientError> for UsecaseError {
     fn from(err: AiClientError) -> Self {
         UsecaseError::AiError(err.to_string())
+    }
+}
+
+impl From<BeamClientError> for UsecaseError {
+    fn from(err: BeamClientError) -> Self {
+        UsecaseError::PaymentError(err.to_string())
     }
 }

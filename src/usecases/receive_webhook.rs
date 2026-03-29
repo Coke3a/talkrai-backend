@@ -190,7 +190,7 @@ impl ReceiveWebhookUseCase {
                     let flex_contents =
                         flex_messages::build_registration_required_flex(&scenes_url);
                     let messages = vec![LineReplyMessage::Flex {
-                        alt_text: "กรุณาลงทะเบียนก่อนใช้งาน".to_string(),
+                        alt_text: "กรุณาลงทะเบียนก่อนเล่นนะคะ".to_string(),
                         contents: flex_contents,
                     }];
                     if let Err(e) = self.line_client.reply_messages(reply_token, messages).await {
@@ -284,7 +284,7 @@ impl ReceiveWebhookUseCase {
         let scenes_url = format!("{}/scenes", self.liff_base_url);
         let flex_contents = flex_messages::build_welcome_flex(&scenes_url);
         let messages = vec![LineReplyMessage::Flex {
-            alt_text: "ยินดีต้อนรับ! กดปุ่มเพื่อเริ่มใช้งาน".to_string(),
+            alt_text: "ยินดีต้อนรับ! กดปุ่มเพื่อเริ่มเล่นเลย".to_string(),
             contents: flex_contents,
         }];
 

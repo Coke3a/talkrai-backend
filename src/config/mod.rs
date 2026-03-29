@@ -5,6 +5,7 @@ pub struct DotEnvyConfig {
     pub database: DatabaseConfig,
     pub line: LineConfig,
     pub ai: AiConfig,
+    pub beam: BeamConfig,
     pub background_tasks: BackgroundTasksConfig,
 }
 
@@ -37,6 +38,12 @@ pub struct AiConfig {
     pub venice_api_key: String,
     pub together_api_key: String,
     pub default_provider: String,
+}
+
+pub struct BeamConfig {
+    pub merchant_id: String,
+    pub api_key: String,
+    pub hmac_key: String,
 }
 
 pub struct BackgroundTasksConfig {

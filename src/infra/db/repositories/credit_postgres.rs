@@ -214,6 +214,50 @@ impl CreditRepository for CreditPostgres {
         Ok(())
     }
 
+    async fn add_and_log(
+        &self,
+        user_id: &UserId,
+        amount: i32,
+        transaction: &CreditTransaction,
+    ) -> Result<(), RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let user_uuid = *user_id.as_uuid();
+        let now = Utc::now();
+        let new_txn = NewCreditTransactionRow::from_entity(transaction);
+
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            async move {
+                let rows_affected = diesel::update(
+                    credit_balances::table.filter(credit_balances::user_id.eq(user_uuid)),
+                )
+                .set((
+                    credit_balances::balance.eq(credit_balances::balance + amount),
+                    credit_balances::total_purchased.eq(credit_balances::total_purchased + amount),
+                    credit_balances::updated_at.eq(now),
+                ))
+                .execute(conn)
+                .await?;
+
+                if rows_affected == 0 {
+                    return Err(diesel::result::Error::NotFound);
+                }
+
+                diesel::insert_into(credit_transactions::table)
+                    .values(&new_txn)
+                    .execute(conn)
+                    .await?;
+
+                Ok(())
+            }
+            .scope_boxed()
+        })
+        .await
+        .map_err(|e| map_diesel_error("credit.add_and_log", e))?;
+
+        Ok(())
+    }
+
     async fn find_transactions_by_user_id(
         &self,
         user_id: &UserId,

@@ -45,7 +45,7 @@ impl LlmRouter {
         match self.config_repo.get(ACTIVE_LLM_PROVIDER_KEY).await {
             Ok(Some(provider)) => provider,
             Ok(None) => {
-                tracing::debug!(
+                tracing::info!(
                     "No '{}' key in app_config, using env default '{}'",
                     ACTIVE_LLM_PROVIDER_KEY,
                     self.env_default
@@ -87,7 +87,7 @@ impl AiClient for LlmRouter {
         request: AiRoleplayRequest,
     ) -> Result<AiRoleplayResponse, AiClientError> {
         let provider = self.resolve_provider().await;
-        tracing::debug!(provider = %provider, "Routing LLM request");
+        tracing::info!(provider = %provider, "Routing LLM request");
         let client = self.get_client(&provider);
 
         let max_attempts = 1 + MAX_RETRIES;
@@ -122,7 +122,7 @@ impl AiClient for LlmRouter {
 
     async fn generate_summary(&self, request: AiSummaryRequest) -> Result<String, AiClientError> {
         let provider = self.resolve_provider().await;
-        tracing::debug!(provider = %provider, "Routing summary request");
+        tracing::info!(provider = %provider, "Routing summary request");
         let client = self.get_client(&provider);
 
         let max_attempts = 1 + MAX_RETRIES;

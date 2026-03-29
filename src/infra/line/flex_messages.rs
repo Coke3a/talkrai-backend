@@ -166,7 +166,7 @@ pub fn build_welcome_flex(liff_scenes_url: &str) -> serde_json::Value {
                 },
                 {
                     "type": "text",
-                    "text": "ยินดีต้อนรับสู่ TalkRai นะคะ ✨\nที่นี่คุณสามารถแชทกับตัวละคร AI สุดพิเศษได้แบบเรียลไทม์เลยค่ะ\n\nกดปุ่มด้านล่างเพื่อเริ่มต้นใช้งาน",
+                    "text": "ยินดีต้อนรับสู่ TalkRai นะคะ ✨\nที่นี่คุณสามารถสวมบทฟินๆ กับตัวละครสุดพิเศษได้เลยค่ะ\n\nกดปุ่มด้านล่างเพื่อเริ่มเล่นเลยนะคะ",
                     "wrap": true,
                     "size": "md",
                     "color": GRAY_600,
@@ -248,6 +248,47 @@ pub fn build_insufficient_credits_flex(liff_credits_url: &str) -> serde_json::Va
                         "label": "เติมเครดิต",
                         "uri": liff_credits_url
                     }
+                }
+            ]
+        }
+    })
+}
+
+/// Build a Flex Bubble notifying the user of a temporary system error.
+pub fn build_system_error_flex() -> serde_json::Value {
+    json!({
+        "type": "bubble",
+        "styles": {
+            "body": {
+                "backgroundColor": BG_CREAM
+            }
+        },
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "height": "3px",
+                    "backgroundColor": WARNING,
+                    "contents": []
+                },
+                {
+                    "type": "text",
+                    "text": "ระบบขัดข้องชั่วคราว",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": ERROR,
+                    "margin": "lg"
+                },
+                {
+                    "type": "text",
+                    "text": "ขอโทษนะคะ ระบบขัดข้องชั่วคราว ลองส่งข้อความมาใหม่อีกครั้งนะคะ 🙏",
+                    "wrap": true,
+                    "size": "md",
+                    "color": GRAY_600,
+                    "margin": "md"
                 }
             ]
         }

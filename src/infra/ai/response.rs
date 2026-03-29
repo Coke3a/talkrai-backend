@@ -84,7 +84,29 @@ pub fn openai_tool_definition() -> Value {
 
 /// Convert tool call args into `AiRoleplayResponse`.
 pub fn tool_args_to_response(args: UpdateSceneStateArgs) -> AiRoleplayResponse {
+    tracing::info!(
+        content = %args.content,
+        current_location = %args.current_location,
+        scene_time = %args.scene_time,
+        mood = %args.mood,
+        "DEBUG: tool_args_to_response — raw tool args"
+    );
+
     let blocks = parse_text_into_blocks(&args.content);
+
+    let block_types: Vec<&str> = blocks
+        .iter()
+        .map(|b| match b.block_type {
+            BlockType::Narration => "narration",
+            BlockType::Dialogue => "dialogue",
+        })
+        .collect();
+    tracing::info!(
+        block_count = blocks.len(),
+        block_types = %format!("{:?}", block_types),
+        "DEBUG: tool_args_to_response — parsed blocks"
+    );
+
     AiRoleplayResponse {
         blocks,
         mood: Some(args.mood),
@@ -120,6 +142,11 @@ pub fn build_summary_system_prompt(existing_summary: &Option<String>) -> String 
 /// Format: `*narration* dialogue *narration*` with optional `[mood:VALUE]` at end.
 /// Never fails except on completely empty input.
 pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError> {
+    tracing::info!(
+        raw_text = %raw,
+        "DEBUG: parse_llm_response — input text"
+    );
+
     let trimmed = raw.trim();
 
     if trimmed.is_empty() {
@@ -142,6 +169,20 @@ pub fn parse_llm_response(raw: &str) -> Result<AiRoleplayResponse, AiClientError
 
     let (text, mood) = extract_mood_tag(content);
     let blocks = parse_text_into_blocks(&text);
+
+    let block_types: Vec<&str> = blocks
+        .iter()
+        .map(|b| match b.block_type {
+            BlockType::Narration => "narration",
+            BlockType::Dialogue => "dialogue",
+        })
+        .collect();
+    tracing::info!(
+        mood = ?mood,
+        block_count = blocks.len(),
+        block_types = %format!("{:?}", block_types),
+        "DEBUG: parse_llm_response — parsed result"
+    );
 
     Ok(AiRoleplayResponse {
         blocks,
@@ -224,6 +265,38 @@ fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
     }
 
     blocks
+}
+
+/// Validate that an AI roleplay response contains meaningful content.
+///
+/// Rules:
+/// 1. Content must not be empty.
+/// 2. Must contain at least 10 Thai or English alphabetic characters.
+/// 3. Alphabetic characters must be at least 30% of total characters.
+pub fn validate_ai_response(response: &AiRoleplayResponse) -> Result<(), String> {
+    let content = response.content_text();
+    let trimmed = content.trim();
+
+    if trimmed.is_empty() {
+        return Err("Empty response".into());
+    }
+
+    let alpha_count = trimmed
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic() || ('\u{0E01}'..='\u{0E4F}').contains(c))
+        .count();
+
+    if alpha_count < 10 {
+        return Err(format!("Too few alphabetic characters: {alpha_count}"));
+    }
+
+    let total = trimmed.chars().count();
+    let ratio = alpha_count as f64 / total as f64;
+    if ratio < 0.3 {
+        return Err(format!("Low alphabetic ratio: {:.1}%", ratio * 100.0));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -423,5 +496,91 @@ mod tests {
         let result = parse_llm_response(raw).unwrap();
         assert!(result.current_location.is_none());
         assert!(result.scene_time.is_none());
+    }
+
+    // --- validate_ai_response tests ---
+
+    fn make_response(content: &str) -> AiRoleplayResponse {
+        AiRoleplayResponse {
+            blocks: vec![ResponseBlock {
+                block_type: BlockType::Dialogue,
+                text: content.to_string(),
+            }],
+            mood: None,
+            current_location: None,
+            scene_time: None,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_single_bracket() {
+        let resp = make_response("[");
+        assert!(validate_ai_response(&resp).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_only_special_chars() {
+        let resp = make_response("***!!!~~~[]");
+        assert!(validate_ai_response(&resp).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_empty() {
+        let resp = make_response("");
+        assert!(validate_ai_response(&resp).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_too_short_thai() {
+        // 3 Thai chars — below threshold of 10
+        let resp = make_response("ค่ะ");
+        assert!(validate_ai_response(&resp).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_low_alpha_ratio() {
+        // 10 Thai alpha chars buried in 60+ special chars — passes min count but ratio < 30%
+        let resp =
+            make_response("[[[***///---!!!สวัสดีค่ะนะคะ!!!~~~]]]***///---!!!~~~[[[***///---!!!~~~]]]");
+        let result = validate_ai_response(&resp);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_accepts_normal_thai_response() {
+        let resp = make_response("สวัสดีค่า ยินดีต้อนรับนะคะ วันนี้มีอะไรให้ช่วยไหมคะ");
+        assert!(validate_ai_response(&resp).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_narration_with_dialogue() {
+        let resp = AiRoleplayResponse {
+            blocks: vec![
+                ResponseBlock {
+                    block_type: BlockType::Narration,
+                    text: "เธอยิ้มอย่างอ่อนโยน".to_string(),
+                },
+                ResponseBlock {
+                    block_type: BlockType::Dialogue,
+                    text: "สวัสดีค่า~ วันนี้อากาศดีจังเลยนะ".to_string(),
+                },
+            ],
+            mood: Some("happy".to_string()),
+            current_location: None,
+            scene_time: None,
+        };
+        assert!(validate_ai_response(&resp).is_ok());
+    }
+
+    #[test]
+    fn validate_accepts_english_response() {
+        let resp = make_response("Hello there, how are you doing today?");
+        assert!(validate_ai_response(&resp).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_emoji_only() {
+        let resp = make_response("🙏🙏🙏🙏🙏🙏🙏🙏🙏🙏");
+        assert!(validate_ai_response(&resp).is_err());
     }
 }

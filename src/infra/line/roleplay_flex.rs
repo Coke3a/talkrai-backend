@@ -269,13 +269,16 @@ pub fn build_roleplay_blocks_bubble(
     time_of_day: &str,
     color_tone: &str,
 ) -> Value {
-    let block_details: Vec<String> = blocks.iter().map(|b| {
-        let btype = match b.block_type {
-            BlockType::Narration => "narration",
-            BlockType::Dialogue => "dialogue",
-        };
-        format!("[{}] {}", btype, b.text)
-    }).collect();
+    let block_details: Vec<String> = blocks
+        .iter()
+        .map(|b| {
+            let btype = match b.block_type {
+                BlockType::Narration => "narration",
+                BlockType::Dialogue => "dialogue",
+            };
+            format!("[{}] {}", btype, b.text)
+        })
+        .collect();
     tracing::info!(
         block_count = blocks.len(),
         blocks = %block_details.join(" | "),

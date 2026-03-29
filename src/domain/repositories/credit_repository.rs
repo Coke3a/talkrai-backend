@@ -20,6 +20,14 @@ pub trait CreditRepository: Send + Sync {
         transaction: &CreditTransaction,
     ) -> Result<(), RepoError>;
 
+    /// Atomic: add credits to balance + insert transaction in one DB transaction
+    async fn add_and_log(
+        &self,
+        user_id: &UserId,
+        amount: i32,
+        transaction: &CreditTransaction,
+    ) -> Result<(), RepoError>;
+
     async fn find_transactions_by_user_id(
         &self,
         user_id: &UserId,

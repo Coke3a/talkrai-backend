@@ -139,6 +139,22 @@ diesel::table! {
 }
 
 diesel::table! {
+    payment_orders (id) {
+        id -> Uuid,
+        user_id -> Uuid,
+        beam_payment_link_id -> Varchar,
+        package_id -> Varchar,
+        credits_amount -> Int4,
+        price_thb -> Int4,
+        status -> Varchar,
+        beam_status -> Nullable<Varchar>,
+        redirect_url -> Nullable<Text>,
+        created_at -> Timestamptz,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
     tag_definitions (id) {
         id -> Uuid,
         category -> Varchar,
@@ -160,6 +176,7 @@ diesel::joinable!(messages -> roleplay_sessions (session_id));
 diesel::joinable!(jobs -> users (user_id));
 diesel::joinable!(credit_balances -> users (user_id));
 diesel::joinable!(credit_transactions -> users (user_id));
+diesel::joinable!(payment_orders -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     app_config,
@@ -171,5 +188,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     jobs,
     credit_balances,
     credit_transactions,
+    payment_orders,
     tag_definitions,
 );
