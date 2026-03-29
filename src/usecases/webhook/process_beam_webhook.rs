@@ -12,11 +12,22 @@ use crate::usecases::UsecaseError;
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Payload for `payment_link.paid` — body is a PaymentLink object.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct BeamWebhookPayload {
+struct PaymentLinkPaidPayload {
     payment_link_id: String,
     status: String,
+}
+
+/// Payload for `charge.succeeded` — body is a Charge object.
+/// The payment link ID is in `source_id` when `source` == "PAYMENT_LINK".
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ChargeSucceededPayload {
+    status: String,
+    source: Option<String>,
+    source_id: Option<String>,
 }
 
 pub struct ProcessBeamWebhookUseCase {
@@ -56,37 +67,68 @@ impl ProcessBeamWebhookUseCase {
     }
 
     pub async fn process_event(&self, event_type: &str, body: &[u8]) -> Result<(), UsecaseError> {
-        if event_type != "payment_link.paid" {
-            tracing::info!(event_type, "Ignoring non-payment webhook event");
-            return Ok(());
-        }
+        let (payment_link_id, beam_status) = match event_type {
+            "payment_link.paid" => {
+                let payload: PaymentLinkPaidPayload =
+                    serde_json::from_slice(body).map_err(|e| {
+                        let body_preview = String::from_utf8_lossy(&body[..body.len().min(500)]);
+                        tracing::error!(
+                            error = %e,
+                            event_type,
+                            body_preview = %body_preview,
+                            "Failed to parse payment_link.paid payload"
+                        );
+                        UsecaseError::Validation(format!("Invalid webhook payload: {}", e))
+                    })?;
+                (payload.payment_link_id, payload.status)
+            }
+            "charge.succeeded" => {
+                let payload: ChargeSucceededPayload =
+                    serde_json::from_slice(body).map_err(|e| {
+                        let body_preview = String::from_utf8_lossy(&body[..body.len().min(500)]);
+                        tracing::error!(
+                            error = %e,
+                            event_type,
+                            body_preview = %body_preview,
+                            "Failed to parse charge.succeeded payload"
+                        );
+                        UsecaseError::Validation(format!("Invalid webhook payload: {}", e))
+                    })?;
 
-        let payload: BeamWebhookPayload = serde_json::from_slice(body).map_err(|e| {
-            let body_preview = String::from_utf8_lossy(&body[..body.len().min(500)]);
-            tracing::error!(
-                error = %e,
-                event_type,
-                body_preview = %body_preview,
-                "Failed to parse Beam webhook payload"
-            );
-            UsecaseError::Validation(format!("Invalid webhook payload: {}", e))
-        })?;
+                // Only process charges originating from payment links
+                match (payload.source.as_deref(), payload.source_id) {
+                    (Some("PAYMENT_LINK"), Some(id)) => (id, payload.status),
+                    _ => {
+                        tracing::info!(
+                            event_type,
+                            "Ignoring charge.succeeded not from a payment link"
+                        );
+                        return Ok(());
+                    }
+                }
+            }
+            _ => {
+                tracing::info!(event_type, "Ignoring non-payment webhook event");
+                return Ok(());
+            }
+        };
 
         tracing::info!(
-            payment_link_id = %payload.payment_link_id,
-            beam_status = %payload.status,
-            "Processing payment_link.paid webhook"
+            payment_link_id = %payment_link_id,
+            beam_status = %beam_status,
+            event_type,
+            "Processing Beam payment webhook"
         );
 
         // 1. Find payment order
         let order = self
             .payment_order_repo
-            .find_by_beam_payment_link_id(&payload.payment_link_id)
+            .find_by_beam_payment_link_id(&payment_link_id)
             .await?
             .ok_or_else(|| {
                 UsecaseError::NotFound(format!(
                     "Payment order not found for beam_id: {}",
-                    payload.payment_link_id
+                    payment_link_id
                 ))
             })?;
 
@@ -104,7 +146,7 @@ impl ProcessBeamWebhookUseCase {
             .update_status(
                 order.id(),
                 &PaymentOrderStatus::Completed,
-                Some(&payload.status),
+                Some(&beam_status),
             )
             .await?;
 

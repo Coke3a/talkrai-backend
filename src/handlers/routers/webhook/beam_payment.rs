@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -54,16 +52,11 @@ pub(crate) async fn beam_webhook_handler(
         return Err(UsecaseError::Validation("Invalid webhook signature".into()).into());
     }
 
-    // Process event in background (return 200 quickly)
-    let usecase = Arc::clone(&state.process_beam_webhook_usecase);
-    let event = event_type.to_string();
-    let body_vec = body.to_vec();
-
-    tokio::spawn(async move {
-        if let Err(e) = usecase.process_event(&event, &body_vec).await {
-            tracing::error!(error = %e, event_type = %event, "Beam webhook processing failed");
-        }
-    });
+    // Process event synchronously so Beam retries on failure (up to 10x with exponential backoff)
+    state
+        .process_beam_webhook_usecase
+        .process_event(event_type, &body)
+        .await?;
 
     Ok((
         StatusCode::OK,
