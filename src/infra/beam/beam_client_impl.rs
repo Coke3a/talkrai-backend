@@ -42,6 +42,15 @@ struct CreatePaymentLinkRequest {
     order: PaymentLinkOrder,
     #[serde(skip_serializing_if = "Option::is_none")]
     redirect_url: Option<String>,
+    qr_prompt_pay: PaymentMethodSetting,
+    card: PaymentMethodSetting,
+    mobile_banking: PaymentMethodSetting,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PaymentMethodSetting {
+    is_enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -85,6 +94,9 @@ impl BeamClient for BeamClientImpl {
                 reference_id: input.reference_id,
             },
             redirect_url: input.redirect_url,
+            qr_prompt_pay: PaymentMethodSetting { is_enabled: true },
+            card: PaymentMethodSetting { is_enabled: true },
+            mobile_banking: PaymentMethodSetting { is_enabled: true },
         };
 
         let reference_id = body.order.reference_id.clone();
