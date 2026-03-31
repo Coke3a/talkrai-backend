@@ -49,7 +49,6 @@ struct CreatePaymentLinkRequest {
 #[serde(rename_all = "camelCase")]
 struct LinkSettings {
     qr_prompt_pay: PaymentMethodSetting,
-    card: PaymentMethodSetting,
     mobile_banking: PaymentMethodSetting,
 }
 
@@ -102,7 +101,6 @@ impl BeamClient for BeamClientImpl {
             redirect_url: input.redirect_url,
             link_settings: LinkSettings {
                 qr_prompt_pay: PaymentMethodSetting { is_enabled: true },
-                card: PaymentMethodSetting { is_enabled: true },
                 mobile_banking: PaymentMethodSetting { is_enabled: true },
             },
         };
