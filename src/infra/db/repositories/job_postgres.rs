@@ -185,6 +185,20 @@ impl JobRepository for JobPostgres {
         Ok(results.into_iter().map(|row| row.into_entity()).collect())
     }
 
+    async fn has_active_job_for_session(&self, session_id: &SessionId) -> Result<bool, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let count: i64 = jobs::table
+            .filter(jobs::session_id.eq(session_id.as_uuid()))
+            .filter(jobs::status.eq_any(&["pending", "processing"]))
+            .count()
+            .get_result(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("job.has_active_job_for_session", e))?;
+
+        Ok(count > 0)
+    }
+
     async fn update(&self, job: &Job) -> Result<(), RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 

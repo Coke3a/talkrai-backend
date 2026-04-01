@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::domain::entities::Job;
 use crate::domain::repositories::RepoError;
-use crate::domain::value_objects::JobId;
+use crate::domain::value_objects::{JobId, SessionId};
 
 #[async_trait]
 pub trait JobRepository: Send + Sync {
@@ -20,6 +20,9 @@ pub trait JobRepository: Send + Sync {
         &self,
         threshold_seconds: i64,
     ) -> Result<Vec<Job>, RepoError>;
+
+    /// Check if the given session already has a non-terminal (pending or processing) job.
+    async fn has_active_job_for_session(&self, session_id: &SessionId) -> Result<bool, RepoError>;
 
     async fn update(&self, job: &Job) -> Result<(), RepoError>;
 }

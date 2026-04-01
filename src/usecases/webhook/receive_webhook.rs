@@ -230,6 +230,36 @@ impl ReceiveWebhookUseCase {
                     }
                 };
 
+                // Concurrency guard: reject if session already has an active job
+                if self
+                    .job_repo
+                    .has_active_job_for_session(session.id())
+                    .await?
+                {
+                    let mut job = Job::new(
+                        JobMode::RoleplayMessage,
+                        Some(session.id().clone()),
+                        user.id().clone(),
+                        line_user_id.to_string(),
+                        text,
+                    );
+                    let job_id = job.id().clone();
+                    self.job_repo.create(&job).await?;
+                    job.reject(
+                        "Session already has an active job being processed. \
+                         Message was received while a previous response was still generating."
+                            .to_string(),
+                    )?;
+                    self.job_repo.update(&job).await?;
+
+                    tracing::info!(
+                        job_id = %job_id.as_uuid(),
+                        session_id = %session.id().as_uuid(),
+                        "Rejected duplicate message — session already has an active job"
+                    );
+                    return Ok(None);
+                }
+
                 self.create_and_dispatch_job(
                     JobMode::RoleplayMessage,
                     Some(session.id().clone()),

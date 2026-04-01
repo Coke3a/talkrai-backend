@@ -167,6 +167,18 @@ impl Job {
         Ok(())
     }
 
+    /// Reject a brand-new job before it enters the processing pipeline.
+    /// Only valid for Pending jobs. Does NOT increment attempts or set locked_at,
+    /// because the job was never actually processed.
+    pub fn reject(&mut self, reason: String) -> Result<(), DomainError> {
+        self.status.transition_to(&JobStatus::Failed)?;
+        self.status = JobStatus::Failed;
+        self.failed_reason = Some(reason);
+        self.completed_at = Some(Utc::now());
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
     pub fn reset_to_pending(&mut self) -> Result<(), DomainError> {
         if !self.can_retry() {
             return Err(DomainError::BusinessRuleViolation(

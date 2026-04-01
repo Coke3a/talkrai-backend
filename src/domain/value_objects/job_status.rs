@@ -22,6 +22,7 @@ impl JobStatus {
         let valid = matches!(
             (self, target),
             (Self::Pending, Self::Processing)
+                | (Self::Pending, Self::Failed)
                 | (Self::Processing, Self::Completed)
                 | (Self::Processing, Self::Failed)
         );
