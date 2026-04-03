@@ -7,9 +7,9 @@ use crate::domain::repositories::{
     CharacterRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
     UserRepository,
 };
-use crate::domain::services::ai_client::{BlockType, ResponseBlock};
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
+use crate::infra::ai::response::parse_text_into_blocks;
 use crate::infra::line::{flex_messages, roleplay_flex};
 use crate::usecases::UsecaseError;
 
@@ -163,10 +163,7 @@ impl StartSessionUseCase {
         }
 
         // 8b. Push opening dialogue (character message with avatar + action spans)
-        let blocks = vec![ResponseBlock {
-            block_type: BlockType::Dialogue,
-            text: scene.opening_dialogue().to_string(),
-        }];
+        let blocks = parse_text_into_blocks(scene.opening_dialogue());
         let bubble = roleplay_flex::build_roleplay_blocks_bubble(
             &blocks,
             scene.location(),

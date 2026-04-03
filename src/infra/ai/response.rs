@@ -209,7 +209,7 @@ fn extract_mood_tag(text: &str) -> (String, Option<String>) {
 /// `*...*` = narration, everything else = dialogue.
 /// `*` inside `"..."` is regular text; `"` inside `*...*` is regular text.
 /// Never returns empty vec for non-empty input.
-fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
+pub fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
     let mut blocks: Vec<ResponseBlock> = Vec::new();
     let mut buffer = String::new();
     let mut in_narration = false;
