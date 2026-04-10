@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS daily_check_ins CASCADE;
+DROP TABLE IF EXISTS user_streaks CASCADE;

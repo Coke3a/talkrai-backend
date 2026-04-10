@@ -19,9 +19,9 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::DotEnvyConfig;
 use crate::domain::repositories::{
-    AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
-    PaymentOrderRepository, RoleplaySessionRepository, SceneRepository, TagDefinitionRepository,
-    UserRepository,
+    AppConfigRepository, CharacterRepository, CheckInRepository, CreditRepository, JobRepository,
+    MessageRepository, PaymentOrderRepository, RoleplaySessionRepository, SceneRepository,
+    TagDefinitionRepository, UserRepository,
 };
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
@@ -34,8 +34,10 @@ use crate::handlers::openapi::ApiDoc;
 use crate::handlers::routers::{default, liff, webhook};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::usecases::background_jobs::{JobPollerUseCase, StaleJobCleanupUseCase};
+use crate::usecases::liff::check_in::CheckInUseCase;
 use crate::usecases::liff::create_payment::CreatePaymentUseCase;
 use crate::usecases::liff::end_session::EndSessionUseCase;
+use crate::usecases::liff::get_check_in_status::GetCheckInStatusUseCase;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceUseCase;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsUseCase;
 use crate::usecases::liff::get_current_session::GetCurrentSessionUseCase;
@@ -67,6 +69,8 @@ pub struct AppState {
     pub create_payment_usecase: Arc<CreatePaymentUseCase>,
     pub get_payment_status_usecase: Arc<GetPaymentStatusUseCase>,
     pub process_beam_webhook_usecase: Arc<ProcessBeamWebhookUseCase>,
+    pub check_in_usecase: Arc<CheckInUseCase>,
+    pub get_check_in_status_usecase: Arc<GetCheckInStatusUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -160,6 +164,19 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         config.beam.hmac_key.clone(),
     ));
 
+    let check_in_usecase = Arc::new(CheckInUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.check_in_repo),
+        Arc::clone(&repos.credit_repo),
+        Arc::clone(&config_repo),
+    ));
+
+    let get_check_in_status_usecase = Arc::new(GetCheckInStatusUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.check_in_repo),
+        Arc::clone(&config_repo),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -178,6 +195,8 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         create_payment_usecase,
         get_payment_status_usecase,
         process_beam_webhook_usecase,
+        check_in_usecase,
+        get_check_in_status_usecase,
     };
 
     let app = build_router(state, &config);
@@ -372,6 +391,7 @@ struct Repositories {
     credit_repo: Arc<dyn CreditRepository>,
     payment_order_repo: Arc<dyn PaymentOrderRepository>,
     tag_def_repo: Arc<dyn TagDefinitionRepository>,
+    check_in_repo: Arc<dyn CheckInRepository>,
 }
 
 struct Infrastructure {
@@ -389,9 +409,9 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CachedAppConfigRepository, CharacterPostgres, CreditPostgres,
-        JobPostgres, MessagePostgres, PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres,
-        TagDefinitionPostgres, UserPostgres,
+        AppConfigPostgres, CachedAppConfigRepository, CharacterPostgres, CheckInPostgres,
+        CreditPostgres, JobPostgres, MessagePostgres, PaymentOrderPostgres,
+        RoleplaySessionPostgres, ScenePostgres, TagDefinitionPostgres, UserPostgres,
     };
 
     let repos = Repositories {
@@ -404,6 +424,7 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         credit_repo: Arc::new(CreditPostgres::new(Arc::clone(db_pool))),
         payment_order_repo: Arc::new(PaymentOrderPostgres::new(Arc::clone(db_pool))),
         tag_def_repo: Arc::new(TagDefinitionPostgres::new(Arc::clone(db_pool))),
+        check_in_repo: Arc::new(CheckInPostgres::new(Arc::clone(db_pool))),
     };
 
     let line_client: Arc<dyn LineClient> = Arc::new(crate::infra::line::LineClientImpl::new(

@@ -12,8 +12,10 @@ use uuid::Uuid;
 use crate::handlers::app::AppState;
 use crate::handlers::auth::LiffAuth;
 use crate::handlers::routers::error_response::{ApiError, ErrorResponse};
+use crate::usecases::liff::check_in::CheckInInput;
 use crate::usecases::liff::create_payment::CreatePaymentInput;
 use crate::usecases::liff::end_session::EndSessionInput;
+use crate::usecases::liff::get_check_in_status::GetCheckInStatusInput;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceInput;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsInput;
 use crate::usecases::liff::get_current_session::GetCurrentSessionInput;
@@ -38,6 +40,8 @@ pub fn router() -> Router<AppState> {
         .route("/payments/status", get(get_payment_status_handler))
         .route("/tags", get(get_tags_handler))
         .route("/scenes", get(get_scenes_handler))
+        .route("/check-in/status", get(get_check_in_status_handler))
+        .route("/check-in", post(check_in_handler))
 }
 
 // ── Session Start/End ──────────────────────────────────────
@@ -566,6 +570,117 @@ pub(crate) async fn get_payment_status_handler(
             status: output.status,
             credits_amount: output.credits_amount,
             price_thb: output.price_thb,
+        }),
+    ))
+}
+
+// ── Check-In ─────────────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CheckInStatusResponse {
+    pub checked_in_today: bool,
+    pub current_streak: i32,
+    pub streak_day: i32,
+    pub credits_to_earn: i32,
+    pub streak_history: Vec<StreakHistoryItemResponse>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct StreakHistoryItemResponse {
+    pub day: i32,
+    pub completed: bool,
+    pub credits: i32,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CheckInResponse {
+    pub credits_earned: i32,
+    pub streak_day: i32,
+    pub current_streak: i32,
+    pub new_balance: i32,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/check-in/status",
+    responses(
+        (status = 200, description = "Check-in status and streak history", body = CheckInStatusResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "User not found", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn get_check_in_status_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+) -> Result<impl IntoResponse, ApiError> {
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Asia::Bangkok)
+        .date_naive();
+
+    let input = GetCheckInStatusInput {
+        line_user_id: liff.line_user_id,
+    };
+
+    let output = state
+        .get_check_in_status_usecase
+        .execute(input, today)
+        .await?;
+
+    let streak_history = output
+        .streak_history
+        .into_iter()
+        .map(|item| StreakHistoryItemResponse {
+            day: item.day,
+            completed: item.completed,
+            credits: item.credits,
+        })
+        .collect();
+
+    Ok((
+        StatusCode::OK,
+        Json(CheckInStatusResponse {
+            checked_in_today: output.checked_in_today,
+            current_streak: output.current_streak,
+            streak_day: output.streak_day,
+            credits_to_earn: output.credits_to_earn,
+            streak_history,
+        }),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/check-in",
+    responses(
+        (status = 200, description = "Check-in successful", body = CheckInResponse),
+        (status = 400, description = "Already checked in today", body = ErrorResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "User not found", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn check_in_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+) -> Result<impl IntoResponse, ApiError> {
+    let today = chrono::Utc::now()
+        .with_timezone(&chrono_tz::Asia::Bangkok)
+        .date_naive();
+
+    let input = CheckInInput {
+        line_user_id: liff.line_user_id,
+    };
+
+    let output = state.check_in_usecase.execute(input, today).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(CheckInResponse {
+            credits_earned: output.credits_earned,
+            streak_day: output.streak_day,
+            current_streak: output.current_streak,
+            new_balance: output.new_balance,
         }),
     ))
 }

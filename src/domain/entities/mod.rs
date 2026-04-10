@@ -1,6 +1,7 @@
 pub mod character;
 pub mod credit_balance;
 pub mod credit_transaction;
+pub mod daily_check_in;
 pub mod job;
 pub mod message;
 pub mod payment_order;
@@ -8,10 +9,12 @@ pub mod roleplay_session;
 pub mod scene;
 pub mod tag_definition;
 pub mod user;
+pub mod user_streak;
 
 pub use character::Character;
 pub use credit_balance::CreditBalance;
 pub use credit_transaction::CreditTransaction;
+pub use daily_check_in::DailyCheckIn;
 pub use job::Job;
 pub use message::Message;
 pub use payment_order::PaymentOrder;
@@ -19,3 +22,4 @@ pub use roleplay_session::RoleplaySession;
 pub use scene::Scene;
 pub use tag_definition::{TagCategory, TagDefinition};
 pub use user::User;
+pub use user_streak::UserStreak;

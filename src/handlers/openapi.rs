@@ -17,6 +17,8 @@ use crate::handlers::routers::{default, liff, webhook};
         liff::get_credit_transactions_handler,
         liff::get_tags_handler,
         liff::get_scenes_handler,
+        liff::get_check_in_status_handler,
+        liff::check_in_handler,
     ),
     components(schemas(
         default::health_check::HealthResponse,
@@ -36,6 +38,9 @@ use crate::handlers::routers::{default, liff, webhook};
         liff::ScenesResponse,
         liff::SceneItemResponse,
         liff::SceneCharacterResponse,
+        liff::CheckInStatusResponse,
+        liff::StreakHistoryItemResponse,
+        liff::CheckInResponse,
         crate::handlers::routers::error_response::ErrorResponse,
     )),
     modifiers(&SecurityAddon),

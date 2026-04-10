@@ -40,6 +40,17 @@ impl IntoResponse for ApiError {
                     "Insufficient credits".to_string(),
                 )
             }
+            UsecaseError::AlreadyCheckedIn => {
+                tracing::warn!(
+                    error_code = "ALREADY_CHECKED_IN",
+                    "Already checked in today"
+                );
+                (
+                    StatusCode::CONFLICT,
+                    "ALREADY_CHECKED_IN",
+                    "คุณเช็คอินไปแล้ววันนี้".to_string(),
+                )
+            }
             UsecaseError::LineError(msg) => {
                 tracing::error!(error_code = "LINE_ERROR", details = %msg, "LINE API error");
                 (StatusCode::BAD_GATEWAY, "LINE_ERROR", msg.clone())

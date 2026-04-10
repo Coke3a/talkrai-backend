@@ -1,5 +1,7 @@
+pub mod check_in;
 pub mod create_payment;
 pub mod end_session;
+pub mod get_check_in_status;
 pub mod get_credit_balance;
 pub mod get_credit_transactions;
 pub mod get_current_session;

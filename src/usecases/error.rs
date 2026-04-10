@@ -17,6 +17,9 @@ pub enum UsecaseError {
     #[error("Insufficient credits")]
     InsufficientCredits,
 
+    #[error("Already checked in today")]
+    AlreadyCheckedIn,
+
     #[error("LINE API error: {0}")]
     LineError(String),
 

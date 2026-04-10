@@ -55,3 +55,4 @@ regex = "1"
 # API Documentation
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+chrono-tz = "0.10.4"

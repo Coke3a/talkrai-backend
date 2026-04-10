@@ -1,5 +1,6 @@
 pub mod app_config_repository;
 pub mod character_repository;
+pub mod check_in_repository;
 pub mod credit_repository;
 pub mod error;
 pub mod job_repository;
@@ -12,6 +13,7 @@ pub mod user_repository;
 
 pub use app_config_repository::AppConfigRepository;
 pub use character_repository::CharacterRepository;
+pub use check_in_repository::CheckInRepository;
 pub use credit_repository::CreditRepository;
 pub use error::RepoError;
 pub use job_repository::JobRepository;

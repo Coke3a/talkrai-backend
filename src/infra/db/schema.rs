@@ -168,6 +168,26 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    user_streaks (user_id) {
+        user_id -> Uuid,
+        current_streak -> Int4,
+        last_check_in_date -> Nullable<Date>,
+        updated_at -> Timestamptz,
+    }
+}
+
+diesel::table! {
+    daily_check_ins (id) {
+        id -> Uuid,
+        user_id -> Uuid,
+        checked_in_date -> Date,
+        streak_day -> Int4,
+        credits_earned -> Int4,
+        created_at -> Timestamptz,
+    }
+}
+
 diesel::joinable!(scenes -> characters (character_id));
 diesel::joinable!(roleplay_sessions -> users (user_id));
 diesel::joinable!(roleplay_sessions -> characters (character_id));
@@ -177,6 +197,8 @@ diesel::joinable!(jobs -> users (user_id));
 diesel::joinable!(credit_balances -> users (user_id));
 diesel::joinable!(credit_transactions -> users (user_id));
 diesel::joinable!(payment_orders -> users (user_id));
+diesel::joinable!(daily_check_ins -> users (user_id));
+diesel::joinable!(user_streaks -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     app_config,
@@ -190,4 +212,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     credit_transactions,
     payment_orders,
     tag_definitions,
+    daily_check_ins,
+    user_streaks,
 );
