@@ -126,9 +126,14 @@ pub fn build_session_opening_flex(
 }
 
 /// Build a Flex Bubble for the welcome message + CTA button (follow event).
-pub fn build_welcome_flex(liff_scenes_url: &str) -> serde_json::Value {
-    json!({
+/// When `hero_image_url` is provided, shows a character collage hero image.
+pub fn build_welcome_flex(
+    liff_scenes_url: &str,
+    hero_image_url: Option<&str>,
+) -> serde_json::Value {
+    let mut bubble = json!({
         "type": "bubble",
+        "size": "mega",
         "styles": {
             "body": {
                 "backgroundColor": BG_CREAM
@@ -142,31 +147,15 @@ pub fn build_welcome_flex(liff_scenes_url: &str) -> serde_json::Value {
             "layout": "vertical",
             "contents": [
                 {
-                    "type": "box",
-                    "layout": "vertical",
-                    "height": "3px",
-                    "backgroundColor": PRIMARY,
-                    "contents": []
-                },
-                {
                     "type": "text",
-                    "text": "TalkRai",
-                    "size": "xs",
+                    "text": "ยินดีต้อนรับสู่ TalkRai ✨",
                     "weight": "bold",
-                    "color": PRIMARY,
-                    "margin": "lg"
+                    "size": "lg",
+                    "color": GRAY_900
                 },
                 {
                     "type": "text",
-                    "text": "ยินดีต้อนรับ!",
-                    "weight": "bold",
-                    "size": "xl",
-                    "color": GRAY_900,
-                    "margin": "sm"
-                },
-                {
-                    "type": "text",
-                    "text": "ยินดีต้อนรับสู่ TalkRai นะคะ ✨\nที่นี่คุณสามารถสวมบทฟินๆ กับตัวละครสุดพิเศษได้เลยค่ะ\n\nกดปุ่มด้านล่างเพื่อเริ่มเล่นเลยนะคะ",
+                    "text": "กว่า 90 ตัวละครพร้อมให้เธอได้รู้จัก — ใครจะทำให้ใจเธอเต้น?",
                     "wrap": true,
                     "size": "md",
                     "color": GRAY_600,
@@ -184,13 +173,30 @@ pub fn build_welcome_flex(liff_scenes_url: &str) -> serde_json::Value {
                     "color": PRIMARY,
                     "action": {
                         "type": "uri",
-                        "label": "เลือกเรื่องที่ชอบเลย!",
+                        "label": "เลือกตัวละครที่ชอบเลย!",
                         "uri": liff_scenes_url
                     }
                 }
             ]
         }
-    })
+    });
+
+    if let Some(url) = hero_image_url {
+        if !url.is_empty() {
+            bubble.as_object_mut().unwrap().insert(
+                "hero".to_string(),
+                json!({
+                    "type": "image",
+                    "url": url,
+                    "size": "full",
+                    "aspectRatio": "20:10",
+                    "aspectMode": "cover"
+                }),
+            );
+        }
+    }
+
+    bubble
 }
 
 /// Build a Flex Bubble notifying the user that their credits have run out,
@@ -414,32 +420,63 @@ mod tests {
     }
 
     #[test]
-    fn welcome_flex_structure() {
-        let flex = build_welcome_flex("https://liff.line.me/123/scenes");
+    fn welcome_flex_with_hero() {
+        let flex = build_welcome_flex(
+            "https://liff.line.me/123/scenes",
+            Some("https://example.com/hero.png"),
+        );
+
+        // Bubble size
+        assert_eq!(flex["size"], "mega");
+
+        // Hero image
+        assert_eq!(flex["hero"]["type"], "image");
+        assert_eq!(flex["hero"]["url"], "https://example.com/hero.png");
+        assert_eq!(flex["hero"]["size"], "full");
+        assert_eq!(flex["hero"]["aspectRatio"], "20:10");
+        assert_eq!(flex["hero"]["aspectMode"], "cover");
+
+        // Body contents: title + body text = 2 elements
         let body_contents = flex["body"]["contents"].as_array().unwrap();
-
-        // accent bar + brand label + title + description = 4 elements
-        assert_eq!(body_contents.len(), 4);
-
-        // Accent bar
-        assert_eq!(body_contents[0]["height"], "3px");
-        assert_eq!(body_contents[0]["backgroundColor"], "#F96D4B");
-
-        // Brand label
-        assert_eq!(body_contents[1]["text"], "TalkRai");
-        assert_eq!(body_contents[1]["color"], "#F96D4B");
+        assert_eq!(body_contents.len(), 2);
 
         // Title
-        assert_eq!(body_contents[2]["text"], "ยินดีต้อนรับ!");
-        assert_eq!(body_contents[2]["color"], "#2A2521");
+        assert_eq!(body_contents[0]["text"], "ยินดีต้อนรับสู่ TalkRai ✨");
+        assert_eq!(body_contents[0]["weight"], "bold");
+        assert_eq!(body_contents[0]["size"], "lg");
+        assert_eq!(body_contents[0]["color"], "#2A2521");
 
-        // Button color
+        // Body text
+        assert!(body_contents[1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("90 ตัวละคร"));
+        assert_eq!(body_contents[1]["color"], "#7D7368");
+        assert_eq!(body_contents[1]["wrap"], true);
+
+        // CTA button label
         let button = &flex["footer"]["contents"][0];
+        assert_eq!(button["action"]["label"], "เลือกตัวละครที่ชอบเลย!");
         assert_eq!(button["color"], "#F96D4B");
 
         // Cream backgrounds
         assert_eq!(flex["styles"]["body"]["backgroundColor"], "#FFF8F0");
         assert_eq!(flex["styles"]["footer"]["backgroundColor"], "#FFF8F0");
+    }
+
+    #[test]
+    fn welcome_flex_without_hero() {
+        let flex = build_welcome_flex("https://liff.line.me/123/scenes", None);
+
+        // No hero when URL is None
+        assert!(flex["hero"].is_null());
+
+        // Still has body and footer with new wording
+        let body_contents = flex["body"]["contents"].as_array().unwrap();
+        assert_eq!(body_contents[0]["text"], "ยินดีต้อนรับสู่ TalkRai ✨");
+
+        let button = &flex["footer"]["contents"][0];
+        assert_eq!(button["action"]["label"], "เลือกตัวละครที่ชอบเลย!");
     }
 
     #[test]

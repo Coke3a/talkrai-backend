@@ -324,9 +324,18 @@ impl ReceiveWebhookUseCase {
 
         // Build welcome Flex Message with CTA button → LIFF /scenes
         let scenes_url = format!("{}/scenes", self.liff_base_url);
-        let flex_contents = flex_messages::build_welcome_flex(&scenes_url);
+        let hero_image_url = self
+            .config_repo
+            .get("welcome_hero_image_url")
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to read welcome_hero_image_url config");
+                None
+            });
+        let flex_contents =
+            flex_messages::build_welcome_flex(&scenes_url, hero_image_url.as_deref());
         let messages = vec![LineReplyMessage::Flex {
-            alt_text: "ยินดีต้อนรับ! กดปุ่มเพื่อเริ่มเล่นเลย".to_string(),
+            alt_text: "ยินดีต้อนรับสู่ TalkRai! เลือกตัวละครที่ชอบเลย".to_string(),
             contents: flex_contents,
         }];
 
