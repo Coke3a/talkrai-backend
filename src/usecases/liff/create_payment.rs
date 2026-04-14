@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::domain::entities::PaymentOrder;
 use crate::domain::repositories::{PaymentOrderRepository, UserRepository};
 use crate::domain::services::beam_client::{BeamClient, CreatePaymentLinkInput};
+use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
 struct PackageInfo {
@@ -68,11 +69,7 @@ impl CreatePaymentUseCase {
         })?;
 
         // 2. Find user
-        let user = self
-            .user_repo
-            .find_by_line_user_id(&input.line_user_id)
-            .await?
-            .ok_or_else(|| UsecaseError::NotFound("User not found".into()))?;
+        let user = require_active_user(&*self.user_repo, &input.line_user_id).await?;
 
         // 3. Create payment order
         let order = PaymentOrder::new(

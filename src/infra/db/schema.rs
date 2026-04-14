@@ -8,6 +8,7 @@ diesel::table! {
         display_name -> Varchar,
         picture_url -> Nullable<Text>,
         language -> Varchar,
+        status -> Varchar,
         terms_accepted_at -> Nullable<Timestamptz>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,

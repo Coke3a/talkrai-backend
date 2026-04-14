@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::entities::User;
 use crate::domain::repositories::{RepoError, UserRepository};
-use crate::domain::value_objects::UserId;
+use crate::domain::value_objects::{UserId, UserStatus};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::users;
 
@@ -22,6 +22,7 @@ struct UserRow {
     display_name: String,
     picture_url: Option<String>,
     language: String,
+    status: String,
     terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -29,12 +30,14 @@ struct UserRow {
 
 impl UserRow {
     fn into_entity(self) -> User {
+        let status: UserStatus = self.status.parse().unwrap_or(UserStatus::Active);
         User::from_existing(
             UserId::from_uuid(self.id),
             self.line_user_id,
             self.display_name,
             self.picture_url,
             self.language,
+            status,
             self.terms_accepted_at,
             self.created_at,
             self.updated_at,
@@ -50,6 +53,7 @@ struct NewUserRow<'a> {
     display_name: &'a str,
     picture_url: Option<&'a str>,
     language: &'a str,
+    status: &'a str,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -62,6 +66,7 @@ impl<'a> NewUserRow<'a> {
             display_name: entity.display_name(),
             picture_url: entity.picture_url(),
             language: entity.language(),
+            status: entity.status().as_str(),
             created_at: *entity.created_at(),
             updated_at: *entity.updated_at(),
         }
@@ -113,6 +118,7 @@ impl UserRepository for UserPostgres {
             .set((
                 users::display_name.eq(user.display_name()),
                 users::picture_url.eq(user.picture_url()),
+                users::status.eq(user.status().as_str()),
                 users::terms_accepted_at.eq(user.terms_accepted_at().copied()),
                 users::updated_at.eq(user.updated_at()),
             ))
@@ -135,6 +141,7 @@ impl UserRepository for UserPostgres {
             .set((
                 users::display_name.eq(user.display_name()),
                 users::picture_url.eq(user.picture_url()),
+                users::status.eq(user.status().as_str()),
                 users::updated_at.eq(user.updated_at()),
             ))
             .execute(&mut conn)

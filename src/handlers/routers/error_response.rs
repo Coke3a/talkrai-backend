@@ -40,6 +40,14 @@ impl IntoResponse for ApiError {
                     "Insufficient credits".to_string(),
                 )
             }
+            UsecaseError::UserInactive => {
+                tracing::warn!(error_code = "USER_INACTIVE", "User account is inactive");
+                (
+                    StatusCode::FORBIDDEN,
+                    "USER_INACTIVE",
+                    "กรุณา Add Friend TalkRai เพื่อใช้งานต่อ".to_string(),
+                )
+            }
             UsecaseError::LineError(msg) => {
                 tracing::error!(error_code = "LINE_ERROR", details = %msg, "LINE API error");
                 (StatusCode::BAD_GATEWAY, "LINE_ERROR", msg.clone())

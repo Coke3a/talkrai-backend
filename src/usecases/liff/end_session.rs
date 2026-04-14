@@ -7,6 +7,7 @@ use crate::domain::repositories::{
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::infra::line::flex_messages;
+use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
 pub struct EndSessionInput {
@@ -46,11 +47,7 @@ impl EndSessionUseCase {
 
     pub async fn execute(&self, input: EndSessionInput) -> Result<EndSessionOutput, UsecaseError> {
         // 1. Find user
-        let user = self
-            .user_repo
-            .find_by_line_user_id(&input.line_user_id)
-            .await?
-            .ok_or_else(|| UsecaseError::NotFound("User not found".into()))?;
+        let user = require_active_user(&*self.user_repo, &input.line_user_id).await?;
 
         // 2. Find active session
         let mut session = self

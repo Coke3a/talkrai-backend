@@ -20,7 +20,7 @@ impl AiClientError {
     pub fn is_retryable(&self) -> bool {
         match self {
             Self::NetworkError(_) | Self::RateLimited => true,
-            Self::ApiError { status, .. } => matches!(status, 408 | 500),
+            Self::ApiError { status, .. } => matches!(status, 408 | 500 | 502 | 503 | 529),
             Self::ParseError(_) => false,
         }
     }

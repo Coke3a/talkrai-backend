@@ -3,6 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 
 use crate::domain::repositories::{MessageRepository, RoleplaySessionRepository, UserRepository};
+use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
 pub struct GetProfileInput {
@@ -35,11 +36,7 @@ impl GetProfileUseCase {
     }
 
     pub async fn execute(&self, input: GetProfileInput) -> Result<GetProfileOutput, UsecaseError> {
-        let user = self
-            .user_repo
-            .find_by_line_user_id(&input.line_user_id)
-            .await?
-            .ok_or_else(|| UsecaseError::NotFound("User not found".to_string()))?;
+        let user = require_active_user(&*self.user_repo, &input.line_user_id).await?;
 
         let user_id = user.id().clone();
 

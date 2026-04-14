@@ -11,6 +11,7 @@ pub mod relationship_level;
 pub mod relationship_thresholds;
 pub mod scene_name;
 pub mod session_status;
+pub mod user_status;
 
 pub use character_gender::CharacterGender;
 pub use character_mood::CharacterMood;
@@ -25,3 +26,4 @@ pub use relationship_level::RelationshipLevel;
 pub use relationship_thresholds::RelationshipThresholds;
 pub use scene_name::SceneName;
 pub use session_status::SessionStatus;
+pub use user_status::UserStatus;

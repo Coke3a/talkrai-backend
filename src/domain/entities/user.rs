@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 
 use crate::domain::error::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::domain::value_objects::{UserId, UserStatus};
 
 pub struct User {
     id: UserId,
@@ -9,6 +9,7 @@ pub struct User {
     display_name: String,
     picture_url: Option<String>,
     language: String,
+    status: UserStatus,
     terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -23,6 +24,7 @@ impl User {
             display_name,
             picture_url,
             language: "th".to_string(),
+            status: UserStatus::Active,
             terms_accepted_at: None,
             created_at: now,
             updated_at: now,
@@ -36,6 +38,7 @@ impl User {
         display_name: String,
         picture_url: Option<String>,
         language: String,
+        status: UserStatus,
         terms_accepted_at: Option<DateTime<Utc>>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
@@ -46,6 +49,7 @@ impl User {
             display_name,
             picture_url,
             language,
+            status,
             terms_accepted_at,
             created_at,
             updated_at,
@@ -76,6 +80,14 @@ impl User {
         self.terms_accepted_at.as_ref()
     }
 
+    pub fn status(&self) -> &UserStatus {
+        &self.status
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.status.is_active()
+    }
+
     pub fn has_accepted_terms(&self) -> bool {
         self.terms_accepted_at.is_some()
     }
@@ -86,6 +98,16 @@ impl User {
 
     pub fn updated_at(&self) -> &DateTime<Utc> {
         &self.updated_at
+    }
+
+    pub fn deactivate(&mut self) {
+        self.status = UserStatus::Inactive;
+        self.updated_at = Utc::now();
+    }
+
+    pub fn activate(&mut self) {
+        self.status = UserStatus::Active;
+        self.updated_at = Utc::now();
     }
 
     pub fn update_profile(&mut self, display_name: String, picture_url: Option<String>) {

@@ -181,15 +181,6 @@ impl ReceiveWebhookUseCase {
                     UsecaseError::Validation("Missing replyToken in message event".into())
                 })?;
 
-                // Fire loading animation (non-blocking, fire-and-forget)
-                let lc = Arc::clone(&self.line_client);
-                let uid = line_user_id.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = lc.show_loading_animation(&uid, Some(20)).await {
-                        tracing::warn!(error = %e, "Failed to show loading animation");
-                    }
-                });
-
                 let user = self.sync_user_from_line(line_user_id).await?;
 
                 // Check if user has accepted terms
@@ -229,6 +220,15 @@ impl ReceiveWebhookUseCase {
                         return Ok(None);
                     }
                 };
+
+                // Fire loading animation only when session exists and we'll process the message
+                let lc = Arc::clone(&self.line_client);
+                let uid = line_user_id.to_string();
+                tokio::spawn(async move {
+                    if let Err(e) = lc.show_loading_animation(&uid, Some(20)).await {
+                        tracing::warn!(error = %e, "Failed to show loading animation");
+                    }
+                });
 
                 // Concurrency guard: reject if session already has an active job
                 if self
@@ -400,10 +400,15 @@ impl ReceiveWebhookUseCase {
             );
         }
 
+        // Deactivate user
+        let mut user = user;
+        user.deactivate();
+        self.user_repo.update(&user).await?;
+
         tracing::info!(
             user_id = %user.id().as_uuid(),
             line_user_id = line_user_id,
-            "Unfollow event handled successfully"
+            "Unfollow event handled — user deactivated"
         );
 
         Ok(None)
@@ -459,7 +464,17 @@ impl ReceiveWebhookUseCase {
 
     async fn sync_user_from_line(&self, line_user_id: &str) -> Result<User, UsecaseError> {
         // Fast path: known user → return from DB immediately, skip LINE API
-        if let Some(user) = self.user_repo.find_by_line_user_id(line_user_id).await? {
+        if let Some(mut user) = self.user_repo.find_by_line_user_id(line_user_id).await? {
+            // Reactivate if inactive (re-follow after unfollow)
+            if !user.is_active() {
+                user.activate();
+                self.user_repo.update(&user).await?;
+                tracing::info!(
+                    user_id = %user.id().as_uuid(),
+                    "User reactivated on re-follow"
+                );
+            }
+
             // Ensure credit balance exists (may be missing for re-followed users)
             if self
                 .credit_repo

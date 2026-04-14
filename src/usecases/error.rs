@@ -17,6 +17,9 @@ pub enum UsecaseError {
     #[error("Insufficient credits")]
     InsufficientCredits,
 
+    #[error("User account is inactive")]
+    UserInactive,
+
     #[error("LINE API error: {0}")]
     LineError(String),
 

@@ -11,6 +11,7 @@ use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
 use crate::infra::ai::response::parse_text_into_blocks;
 use crate::infra::line::{flex_messages, roleplay_flex};
+use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
 pub struct StartSessionInput {
@@ -56,11 +57,7 @@ impl StartSessionUseCase {
         input: StartSessionInput,
     ) -> Result<StartSessionOutput, UsecaseError> {
         // 1. Find user
-        let user = self
-            .user_repo
-            .find_by_line_user_id(&input.line_user_id)
-            .await?
-            .ok_or_else(|| UsecaseError::NotFound("User not found".into()))?;
+        let user = require_active_user(&*self.user_repo, &input.line_user_id).await?;
 
         // 2. Auto-accept terms if not yet accepted
         let mut user = user;
