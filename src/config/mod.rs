@@ -27,6 +27,7 @@ pub struct LineConfig {
     pub channel_access_token: String,
     pub line_channel_id: String,
     pub liff_base_url: String,
+    pub cors_origin: String,
     pub rich_menu_0_id: String,
     pub rich_menu_a_id: String,
     pub rich_menu_b_id: String,

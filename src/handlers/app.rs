@@ -225,10 +225,10 @@ fn init_tracing() {
 fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
     let allowed_origin = config
         .line
-        .liff_base_url
+        .cors_origin
         .trim_end_matches('/')
         .parse::<axum::http::HeaderValue>()
-        .expect("LIFF_BASE_URL must be a valid header value");
+        .expect("CORS_ORIGIN must be a valid header value");
 
     let cors = CorsLayer::new()
         .allow_origin(allowed_origin)

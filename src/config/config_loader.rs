@@ -36,6 +36,12 @@ pub fn load() -> Result<DotEnvyConfig> {
             .context("LINE_CHANNEL_ACCESS_TOKEN is required")?,
         line_channel_id: std::env::var("LINE_CHANNEL_ID").context("LINE_CHANNEL_ID is required")?,
         liff_base_url: std::env::var("LIFF_BASE_URL").context("LIFF_BASE_URL is required")?,
+        cors_origin: env_or(
+            "CORS_ORIGIN",
+            std::env::var("LIFF_BASE_URL")
+                .unwrap_or_default()
+                .trim_end_matches('/'),
+        ),
         rich_menu_0_id: std::env::var("RICH_MENU_0_ID").context("RICH_MENU_0_ID is required")?,
         rich_menu_a_id: std::env::var("RICH_MENU_A_ID").context("RICH_MENU_A_ID is required")?,
         rich_menu_b_id: std::env::var("RICH_MENU_B_ID").context("RICH_MENU_B_ID is required")?,
