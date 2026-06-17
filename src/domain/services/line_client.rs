@@ -66,6 +66,10 @@ pub enum LineMessage {
         contents: serde_json::Value,
         sender_name: String,
         sender_icon_url: String,
+        /// Optional quick-reply option texts (plain strings, not yet LINE JSON).
+        /// Serialized + validated against the LINE quick-reply spec at the push
+        /// boundary (`build_quick_reply_object`); `None` => no quick reply attached.
+        quick_reply: Option<Vec<String>>,
     },
 }
 

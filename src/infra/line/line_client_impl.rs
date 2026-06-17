@@ -5,6 +5,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
+use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
 use crate::domain::services::line_client::{
@@ -100,6 +101,46 @@ fn build_sender_object(sender_name: &str, sender_icon_url: &str) -> Value {
         json!({ "iconUrl": sender_icon_url })
     } else {
         json!({ "name": name, "iconUrl": sender_icon_url })
+    }
+}
+
+/// Build a LINE `quickReply` object from plain option texts, enforcing the
+/// official LINE quick-reply spec. This is the single chokepoint that guarantees
+/// every pushed quick reply is spec-valid:
+/// - each item is trimmed; empty (or whitespace-only) items are dropped;
+/// - the `label` must be ≤ 20 grapheme clusters — longer items are dropped, not
+///   truncated (Phase 2 generation should already guarantee this; this guards
+///   against bad data reaching the push boundary);
+/// - at most 13 items are kept (LINE's hard limit);
+/// - in our usage `label` == `text` == the option string, so the resulting
+///   `text` is well within LINE's 300-char limit.
+///
+/// Returns `None` when no valid item remains, so the caller omits `quickReply`.
+fn build_quick_reply_object(items: &[String]) -> Option<Value> {
+    const MAX_ITEMS: usize = 13;
+    const MAX_LABEL_GRAPHEMES: usize = 20;
+
+    let actions: Vec<Value> = items
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty() && item.graphemes(true).count() <= MAX_LABEL_GRAPHEMES)
+        .take(MAX_ITEMS)
+        .map(|item| {
+            json!({
+                "type": "action",
+                "action": {
+                    "type": "message",
+                    "label": item,
+                    "text": item,
+                }
+            })
+        })
+        .collect();
+
+    if actions.is_empty() {
+        None
+    } else {
+        Some(json!({ "items": actions }))
     }
 }
 
@@ -204,14 +245,31 @@ impl LineClient for LineClientImpl {
                         contents,
                         sender_name,
                         sender_icon_url,
+                        quick_reply,
                     } => {
                         let sender = build_sender_object(&sender_name, &sender_icon_url);
-                        json!({
+                        let mut message = json!({
                             "type": "flex",
                             "altText": alt_text,
                             "contents": contents,
                             "sender": sender
-                        })
+                        });
+                        // Attach a quick reply only when the option texts survive
+                        // LINE-spec validation; otherwise omit `quickReply` entirely.
+                        if let Some(items) = quick_reply {
+                            match build_quick_reply_object(&items) {
+                                Some(qr) => message["quickReply"] = qr,
+                                // Non-empty input but nothing survived validation:
+                                // omit quickReply, but leave a trace so bad Phase-2
+                                // data is observable rather than silently dropped.
+                                None if !items.is_empty() => tracing::warn!(
+                                    item_count = items.len(),
+                                    "quick reply omitted: all items failed LINE-spec validation"
+                                ),
+                                None => {}
+                            }
+                        }
+                        message
                     }
                 })
                 .collect(),
@@ -539,5 +597,83 @@ impl LineClient for LineClientImpl {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_message_actions_for_valid_items() {
+        let qr = build_quick_reply_object(&["สวัสดี".to_string(), "ทักทาย".to_string()])
+            .expect("expected a quick reply object");
+        let items = qr["items"].as_array().expect("items array");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], "action");
+        assert_eq!(items[0]["action"]["type"], "message");
+        // In our usage label == text == the option string.
+        assert_eq!(items[0]["action"]["label"], "สวัสดี");
+        assert_eq!(items[0]["action"]["text"], "สวัสดี");
+        assert_eq!(items[1]["action"]["label"], "ทักทาย");
+    }
+
+    #[test]
+    fn drops_empty_and_whitespace_items_and_trims() {
+        let qr =
+            build_quick_reply_object(&["".to_string(), "   ".to_string(), "  ตอบ  ".to_string()])
+                .expect("one valid item should remain");
+        let items = qr["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["action"]["label"], "ตอบ");
+    }
+
+    #[test]
+    fn drops_items_over_twenty_graphemes() {
+        // 21 base Thai consonants => 21 grapheme clusters (over the limit) => dropped.
+        let too_long = "ก".repeat(21);
+        let ok = "ก".repeat(20);
+        let qr = build_quick_reply_object(&[too_long, ok.clone()]).expect("one valid item");
+        let items = qr["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["action"]["label"], ok);
+    }
+
+    #[test]
+    fn counts_grapheme_clusters_not_code_points() {
+        // "e" + U+0301 combining acute = 2 code points but 1 grapheme cluster.
+        // 20 clusters (40 code points) must survive; 21 clusters must be dropped.
+        let base = "e\u{0301}";
+        let twenty = base.repeat(20);
+        let twenty_one = base.repeat(21);
+        assert_eq!(
+            twenty.chars().count(),
+            40,
+            "sanity: code points != clusters"
+        );
+        let qr = build_quick_reply_object(&[twenty.clone(), twenty_one])
+            .expect("the 20-cluster item survives");
+        let items = qr["items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["action"]["label"], twenty);
+    }
+
+    #[test]
+    fn returns_none_when_no_valid_items() {
+        let qr = build_quick_reply_object(&["".to_string(), "ก".repeat(25)]);
+        assert!(qr.is_none());
+    }
+
+    #[test]
+    fn returns_none_for_empty_input() {
+        assert!(build_quick_reply_object(&[]).is_none());
+    }
+
+    #[test]
+    fn caps_at_thirteen_items() {
+        let many: Vec<String> = (0..20).map(|i| format!("ตอบ{i}")).collect();
+        let qr = build_quick_reply_object(&many).expect("object");
+        let items = qr["items"].as_array().unwrap();
+        assert_eq!(items.len(), 13);
     }
 }

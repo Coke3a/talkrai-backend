@@ -396,6 +396,7 @@ impl ProcessRoleplayMessageUseCase {
                             contents: bubble,
                             sender_name: "TalkRai".into(),
                             sender_icon_url: String::new(),
+                            quick_reply: None,
                         }]
                     } else {
                         let bubble = flex_messages::build_system_error_flex();
@@ -405,6 +406,7 @@ impl ProcessRoleplayMessageUseCase {
                             contents: bubble,
                             sender_name: "TalkRai".into(),
                             sender_icon_url: String::new(),
+                            quick_reply: None,
                         }]
                     };
 
@@ -702,6 +704,7 @@ impl ProcessRoleplayMessageUseCase {
                 contents: bubble,
                 sender_name: character.name().as_str().to_string(),
                 sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                quick_reply: None,
             }];
 
             self.line_client
@@ -871,6 +874,7 @@ mod tests {
             CharacterMood::Neutral,
             None,
             None,
+            Vec::new(),
             chrono::Utc::now(),
             chrono::Utc::now(),
         )

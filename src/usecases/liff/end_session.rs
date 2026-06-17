@@ -93,6 +93,7 @@ impl EndSessionUseCase {
                         contents: flex_contents,
                         sender_name: "TalkRai".into(),
                         sender_icon_url: String::new(),
+                        quick_reply: None,
                     }],
                 )
                 .await

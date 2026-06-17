@@ -21,6 +21,7 @@ pub struct Scene {
     start_mood: CharacterMood,
     image_url: Option<String>,
     image_prompt: Option<String>,
+    suggested_first_replies: Vec<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -59,6 +60,7 @@ impl Scene {
             start_mood,
             image_url: None,
             image_prompt: None,
+            suggested_first_replies: Vec::new(),
             created_at: now,
             updated_at: now,
         }
@@ -82,6 +84,7 @@ impl Scene {
         start_mood: CharacterMood,
         image_url: Option<String>,
         image_prompt: Option<String>,
+        suggested_first_replies: Vec<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -102,6 +105,7 @@ impl Scene {
             start_mood,
             image_url,
             image_prompt,
+            suggested_first_replies,
             created_at,
             updated_at,
         }
@@ -171,11 +175,69 @@ impl Scene {
         self.image_prompt.as_deref()
     }
 
+    pub fn suggested_first_replies(&self) -> &[String] {
+        &self.suggested_first_replies
+    }
+
     pub fn created_at(&self) -> &DateTime<Utc> {
         &self.created_at
     }
 
     pub fn updated_at(&self) -> &DateTime<Utc> {
         &self.updated_at
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scene_with_replies(replies: Vec<String>) -> Scene {
+        Scene::from_existing(
+            SceneId::new(),
+            CharacterId::new(),
+            SceneName::from_trusted("ฉากทดสอบ".to_string()),
+            "location".to_string(),
+            "evening".to_string(),
+            "atmosphere".to_string(),
+            "situation".to_string(),
+            "*narrator*".to_string(),
+            "dialogue".to_string(),
+            false,
+            true,
+            false,
+            RelationshipLevel::Stranger,
+            CharacterMood::Neutral,
+            None,
+            None,
+            replies,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    #[test]
+    fn returns_suggested_first_replies() {
+        let scene = scene_with_replies(vec!["สวัสดี".to_string(), "เป็นไงบ้าง".to_string()]);
+        assert_eq!(scene.suggested_first_replies(), &["สวัสดี", "เป็นไงบ้าง"]);
+    }
+
+    #[test]
+    fn new_scene_defaults_to_no_suggested_replies() {
+        let scene = Scene::new(
+            CharacterId::new(),
+            SceneName::from_trusted("ฉาก".to_string()),
+            "location".to_string(),
+            "evening".to_string(),
+            "atmosphere".to_string(),
+            "situation".to_string(),
+            "*narrator*".to_string(),
+            "dialogue".to_string(),
+            false,
+            false,
+            RelationshipLevel::Stranger,
+            CharacterMood::Neutral,
+        );
+        assert!(scene.suggested_first_replies().is_empty());
     }
 }

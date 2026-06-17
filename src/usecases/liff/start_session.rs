@@ -14,6 +14,16 @@ use crate::infra::line::{flex_messages, roleplay_flex};
 use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
+/// Derive the opening-message quick reply from a scene's suggested first replies.
+/// Empty slice => `None` (fallback: push the opening with no quick reply, no error).
+fn derive_opening_quick_reply(suggested: &[String]) -> Option<Vec<String>> {
+    if suggested.is_empty() {
+        None
+    } else {
+        Some(suggested.to_vec())
+    }
+}
+
 pub struct StartSessionInput {
     pub line_user_id: String,
     pub scene_id: Uuid,
@@ -148,6 +158,10 @@ impl StartSessionUseCase {
                     contents: session_flex,
                     sender_name: "TalkRai".into(),
                     sender_icon_url: String::new(),
+                    // Opening card is the FIRST of two pushes — no quick reply here:
+                    // LINE drops quick replies when a newer message enters the room,
+                    // so they ride the opening dialogue (the last message) below.
+                    quick_reply: None,
                 }],
             )
             .await
@@ -169,6 +183,12 @@ impl StartSessionUseCase {
         );
         let alt_text = roleplay_flex::truncate_alt_text(scene.opening_dialogue());
 
+        // Attach the scene's suggested first replies as a LINE quick reply on the
+        // LAST opening message (this dialogue bubble). Empty column => None =>
+        // normal push with no quick reply (fallback). The push boundary validates
+        // each item against the LINE quick-reply spec before sending.
+        let opening_quick_reply = derive_opening_quick_reply(scene.suggested_first_replies());
+
         if let Err(e) = self
             .line_client
             .push_messages(
@@ -178,6 +198,7 @@ impl StartSessionUseCase {
                     contents: bubble,
                     sender_name: character.name().as_str().to_string(),
                     sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                    quick_reply: opening_quick_reply,
                 }],
             )
             .await
@@ -205,5 +226,308 @@ impl StartSessionUseCase {
         Ok(StartSessionOutput {
             session_id: *session.id().as_uuid(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::entities::{Character, RoleplaySession, Scene, User};
+    use crate::domain::repositories::RepoError;
+    use crate::domain::services::line_client::{LineProfile, LineReplyMessage};
+    use crate::domain::services::LineClientError;
+    use crate::domain::value_objects::{
+        CharacterGender, CharacterId, CharacterMood, CharacterName, RelationshipLevel, SceneId,
+        SceneName, SessionId, UserId, UserStatus,
+    };
+    use async_trait::async_trait;
+    use chrono::Utc;
+    use std::sync::Mutex;
+
+    // ── derive_opening_quick_reply (pure) ──────────────────────
+
+    #[test]
+    fn derive_opening_quick_reply_empty_is_none() {
+        assert_eq!(derive_opening_quick_reply(&[]), None);
+    }
+
+    #[test]
+    fn derive_opening_quick_reply_nonempty_is_some() {
+        let replies = vec!["สวัสดี".to_string(), "ทักทาย".to_string()];
+        assert_eq!(derive_opening_quick_reply(&replies), Some(replies.clone()));
+    }
+
+    // ── Builders ───────────────────────────────────────────────
+
+    fn active_user() -> User {
+        User::from_existing(
+            UserId::new(),
+            "U_test".to_string(),
+            "Tester".to_string(),
+            None,
+            "th".to_string(),
+            UserStatus::Active,
+            Some(Utc::now()), // terms already accepted -> skip update path
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    fn test_character() -> Character {
+        Character::from_existing(
+            CharacterId::new(),
+            CharacterName::from_trusted("มินะ".to_string()),
+            "personality".to_string(),
+            "speaking_style".to_string(),
+            "background".to_string(),
+            "system_prompt".to_string(),
+            Some("https://avatar.test/img.webp".to_string()),
+            None,
+            vec!["cool".to_string()],
+            vec!["tsundere".to_string()],
+            CharacterGender::Female,
+            true,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    fn test_scene(replies: Vec<String>) -> Scene {
+        Scene::from_existing(
+            SceneId::new(),
+            CharacterId::new(),
+            SceneName::from_trusted("ร้านกาแฟ".to_string()),
+            "ร้านกาแฟริมทาง".to_string(),
+            "เย็น".to_string(),
+            "อบอุ่น สบายๆ".to_string(),
+            "situation".to_string(),
+            "*บรรยากาศร้านกาแฟยามเย็น*".to_string(),
+            "สวัสดี วันนี้อยากดื่มอะไรดี".to_string(),
+            false,
+            true,
+            false,
+            RelationshipLevel::Stranger,
+            CharacterMood::Neutral,
+            None,
+            None,
+            replies,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
+    // ── Mocks ──────────────────────────────────────────────────
+
+    struct MockUserRepo;
+    #[async_trait]
+    impl UserRepository for MockUserRepo {
+        async fn find_by_id(&self, _: &UserId) -> Result<Option<User>, RepoError> {
+            Ok(None)
+        }
+        async fn find_by_line_user_id(&self, _: &str) -> Result<Option<User>, RepoError> {
+            Ok(Some(active_user()))
+        }
+        async fn upsert(&self, _: &User) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn update(&self, _: &User) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
+    struct MockSessionRepo;
+    #[async_trait]
+    impl RoleplaySessionRepository for MockSessionRepo {
+        async fn find_by_id(&self, _: &SessionId) -> Result<Option<RoleplaySession>, RepoError> {
+            Ok(None)
+        }
+        async fn find_active_by_user_id(
+            &self,
+            _: &UserId,
+        ) -> Result<Option<RoleplaySession>, RepoError> {
+            Ok(None)
+        }
+        async fn count_by_user_id(&self, _: &UserId) -> Result<i64, RepoError> {
+            Ok(0)
+        }
+        async fn create(&self, _: &RoleplaySession) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn update(&self, _: &RoleplaySession) -> Result<(), RepoError> {
+            Ok(())
+        }
+    }
+
+    struct MockSceneRepo {
+        scene: Mutex<Option<Scene>>,
+    }
+    #[async_trait]
+    impl SceneRepository for MockSceneRepo {
+        async fn find_by_id(&self, _: &SceneId) -> Result<Option<Scene>, RepoError> {
+            Ok(self.scene.lock().unwrap().take())
+        }
+        async fn find_by_character_id(&self, _: &CharacterId) -> Result<Vec<Scene>, RepoError> {
+            Ok(vec![])
+        }
+        async fn find_default_by_character_id(
+            &self,
+            _: &CharacterId,
+        ) -> Result<Option<Scene>, RepoError> {
+            Ok(None)
+        }
+        async fn find_all_active(&self) -> Result<Vec<Scene>, RepoError> {
+            Ok(vec![])
+        }
+    }
+
+    struct MockCharacterRepo;
+    #[async_trait]
+    impl CharacterRepository for MockCharacterRepo {
+        async fn find_by_id(&self, _: &CharacterId) -> Result<Option<Character>, RepoError> {
+            Ok(Some(test_character()))
+        }
+        async fn find_active(&self) -> Result<Vec<Character>, RepoError> {
+            Ok(vec![])
+        }
+    }
+
+    struct MockMessageRepo;
+    #[async_trait]
+    impl MessageRepository for MockMessageRepo {
+        async fn create(&self, _: &Message) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn create_many(&self, _: &[Message]) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn find_by_session_id(
+            &self,
+            _: &SessionId,
+            _: i64,
+        ) -> Result<Vec<Message>, RepoError> {
+            Ok(vec![])
+        }
+        async fn count_by_user_id(&self, _: &UserId) -> Result<i64, RepoError> {
+            Ok(0)
+        }
+    }
+
+    /// Records the `quick_reply` field of every pushed message, in push order.
+    struct RecordingLineClient {
+        pushed: Mutex<Vec<Option<Vec<String>>>>,
+    }
+    impl RecordingLineClient {
+        fn new() -> Self {
+            Self {
+                pushed: Mutex::new(Vec::new()),
+            }
+        }
+    }
+    #[async_trait]
+    impl LineClient for RecordingLineClient {
+        fn verify_signature(&self, _: &[u8], _: &str) -> Result<bool, LineClientError> {
+            Ok(true)
+        }
+        async fn push_messages(
+            &self,
+            _: &str,
+            messages: Vec<LineMessage>,
+        ) -> Result<(), LineClientError> {
+            let mut pushed = self.pushed.lock().unwrap();
+            for m in &messages {
+                match m {
+                    LineMessage::Flex { quick_reply, .. } => pushed.push(quick_reply.clone()),
+                    LineMessage::Text { .. } => pushed.push(None),
+                }
+            }
+            Ok(())
+        }
+        async fn get_profile(&self, _: &str) -> Result<LineProfile, LineClientError> {
+            unimplemented!()
+        }
+        async fn link_rich_menu(&self, _: &str, _: &str) -> Result<(), LineClientError> {
+            Ok(())
+        }
+        async fn unlink_rich_menu(&self, _: &str) -> Result<(), LineClientError> {
+            Ok(())
+        }
+        async fn show_loading_animation(
+            &self,
+            _: &str,
+            _: Option<u32>,
+        ) -> Result<(), LineClientError> {
+            Ok(())
+        }
+        async fn verify_liff_token(&self, _: &str) -> Result<LineProfile, LineClientError> {
+            unimplemented!()
+        }
+        async fn reply_messages(
+            &self,
+            _: &str,
+            _: Vec<LineReplyMessage>,
+        ) -> Result<(), LineClientError> {
+            Ok(())
+        }
+    }
+
+    fn usecase(scene: Scene, line: Arc<RecordingLineClient>) -> StartSessionUseCase {
+        StartSessionUseCase::new(
+            Arc::new(MockUserRepo),
+            Arc::new(MockSessionRepo),
+            Arc::new(MockSceneRepo {
+                scene: Mutex::new(Some(scene)),
+            }),
+            Arc::new(MockCharacterRepo),
+            Arc::new(MockMessageRepo),
+            line,
+        )
+    }
+
+    fn input() -> StartSessionInput {
+        StartSessionInput {
+            line_user_id: "U_test".to_string(),
+            scene_id: Uuid::new_v4(),
+            rich_menu_b_id: "richmenu-b".to_string(),
+        }
+    }
+
+    // ── Placement integration tests ────────────────────────────
+
+    #[tokio::test]
+    async fn attaches_quick_reply_to_last_opening_message_only() {
+        let replies = vec!["อยากกาแฟ".to_string(), "ขอชาเย็น".to_string()];
+        let scene = test_scene(replies.clone());
+        let line = Arc::new(RecordingLineClient::new());
+
+        usecase(scene, Arc::clone(&line))
+            .execute(input())
+            .await
+            .expect("start session should succeed");
+
+        let pushed = line.pushed.lock().unwrap();
+        // Two opening pushes: [0] = opening card, [1] = opening dialogue (last).
+        assert_eq!(pushed.len(), 2);
+        assert_eq!(pushed[0], None, "opening card must NOT carry a quick reply");
+        assert_eq!(
+            pushed[1],
+            Some(replies),
+            "opening dialogue (last message) carries the quick reply"
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_suggestions_pushes_with_no_quick_reply_and_no_error() {
+        let scene = test_scene(vec![]);
+        let line = Arc::new(RecordingLineClient::new());
+
+        let result = usecase(scene, Arc::clone(&line)).execute(input()).await;
+
+        assert!(result.is_ok(), "fallback path must not error");
+        let pushed = line.pushed.lock().unwrap();
+        assert_eq!(pushed.len(), 2);
+        assert!(
+            pushed.iter().all(|qr| qr.is_none()),
+            "no message carries a quick reply when the column is empty"
+        );
     }
 }

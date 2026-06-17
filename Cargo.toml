@@ -51,6 +51,7 @@ sha2 = "0.10"
 base64 = "0.22"
 bytes = "1"
 regex = "1"
+unicode-segmentation = "1"
 
 # API Documentation
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }

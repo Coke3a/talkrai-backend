@@ -39,6 +39,7 @@ struct SceneRow {
     image_prompt: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    suggested_first_replies: Vec<String>,
 }
 
 impl SceneRow {
@@ -61,6 +62,7 @@ impl SceneRow {
             CharacterMood::from_str(&self.start_mood).expect("invalid start_mood in DB"),
             self.image_url,
             self.image_prompt,
+            self.suggested_first_replies,
             self.created_at,
             self.updated_at,
         )

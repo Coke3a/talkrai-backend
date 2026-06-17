@@ -54,6 +54,7 @@ diesel::table! {
         image_prompt -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        suggested_first_replies -> Array<Text>,
     }
 }
 

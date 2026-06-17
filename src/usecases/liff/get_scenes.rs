@@ -220,6 +220,7 @@ mod tests {
             CharacterMood::Neutral,
             Some("https://img.test/scene.webp".to_string()),
             None,
+            Vec::new(),
             Utc::now(),
             Utc::now(),
         )
