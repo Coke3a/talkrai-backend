@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 
 use crate::domain::value_objects::{CharacterGender, CharacterId, CharacterName};
 
+#[derive(Clone)]
 pub struct Character {
     id: CharacterId,
     name: CharacterName,

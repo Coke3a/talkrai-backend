@@ -1,5 +1,8 @@
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Instant;
+
+use chrono::{DateTime, Utc};
 
 use crate::domain::entities::{Character, Job, Message, RoleplaySession, Scene};
 use crate::domain::repositories::{
@@ -10,6 +13,7 @@ use crate::domain::services::ai_client::{
     AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
+use crate::domain::services::LineClientError;
 use crate::domain::value_objects::{
     CharacterMood, JobId, MessageRole, RelationshipThresholds, SessionId,
 };
@@ -234,6 +238,81 @@ pub fn build_ai_messages(
 }
 
 // ---------------------------------------------------------------------------
+// Response delivery — free reply API first, push as the reliable backstop
+// ---------------------------------------------------------------------------
+
+/// Default reply-token validity window (seconds), used when `app_config` does not
+/// override it. Conservative margin below LINE's ~1-minute reply-token lifetime.
+/// Not load-bearing for correctness: push is always the backstop, so this only
+/// trades free-reply rate against the occasional wasted reply attempt.
+const DEFAULT_REPLY_TOKEN_WINDOW_SECS: i64 = 50;
+
+/// Which path delivered the response — recorded as a metric for cost/latency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DeliveryPath {
+    /// Free reply API (token still valid) — the cost-optimal path.
+    ReplyFree,
+    /// Reply attempted but failed; recovered via push (charged).
+    PushFallback,
+    /// Token absent or past the window; pushed directly (charged).
+    PushDirect,
+}
+
+impl DeliveryPath {
+    fn as_str(self) -> &'static str {
+        match self {
+            DeliveryPath::ReplyFree => "reply_free",
+            DeliveryPath::PushFallback => "push_fallback",
+            DeliveryPath::PushDirect => "push_direct",
+        }
+    }
+}
+
+/// Attempt the free reply only when a token is present and still within the
+/// validity window. Pure decision so it can be unit-tested without IO.
+fn should_attempt_reply(reply_token: Option<&str>, elapsed_secs: i64, window_secs: i64) -> bool {
+    reply_token.is_some() && elapsed_secs < window_secs
+}
+
+/// Deliver the character response, preferring the free reply API while the reply
+/// token is valid and falling back to push otherwise. Push is the reliable
+/// backstop — the user receives the message as long as push succeeds.
+///
+/// Free function (not a method) so it can be tested with a minimal fake client
+/// rather than constructing the whole usecase.
+async fn deliver_response(
+    line_client: &dyn LineClient,
+    line_user_id: &str,
+    reply_token: Option<&str>,
+    job_created_at: DateTime<Utc>,
+    messages: Vec<LineMessage>,
+    window_secs: i64,
+) -> Result<DeliveryPath, LineClientError> {
+    let elapsed_secs = (Utc::now() - job_created_at).num_seconds();
+
+    if should_attempt_reply(reply_token, elapsed_secs, window_secs) {
+        let token = reply_token.expect("presence checked by should_attempt_reply");
+        // Clone so the original survives for the push fallback. One small bubble —
+        // negligible next to the AI call that dominates this pipeline.
+        match line_client.reply_messages(token, messages.clone()).await {
+            Ok(()) => return Ok(DeliveryPath::ReplyFree),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    elapsed_secs,
+                    "Reply failed within window; falling back to push"
+                );
+                line_client.push_messages(line_user_id, messages).await?;
+                return Ok(DeliveryPath::PushFallback);
+            }
+        }
+    }
+
+    line_client.push_messages(line_user_id, messages).await?;
+    Ok(DeliveryPath::PushDirect)
+}
+
+// ---------------------------------------------------------------------------
 // ProcessRoleplayMessageUseCase — execution engine for the roleplay pipeline
 // ---------------------------------------------------------------------------
 
@@ -254,6 +333,7 @@ struct ResolvedConfig {
     ai_max_tokens: u32,
     summarize_interval: Option<u32>,
     relationship_thresholds: RelationshipThresholds,
+    reply_token_window_secs: i64,
 }
 
 pub struct ProcessRoleplayMessageInput {
@@ -295,12 +375,19 @@ impl ProcessRoleplayMessageUseCase {
             "relationship_threshold_acquaintance",
             "relationship_threshold_friend",
             "relationship_threshold_close_friend",
+            "reply_token_window_secs",
         ];
         let map = self.config_repo.get_many(keys).await?;
 
         let summarize_interval = map
             .get("summarize_interval")
             .and_then(|v| v.parse::<u32>().ok());
+
+        // Optional: falls back to the conservative default when unset.
+        let reply_token_window_secs = map
+            .get("reply_token_window_secs")
+            .and_then(|v| v.parse::<i64>().ok())
+            .unwrap_or(DEFAULT_REPLY_TOKEN_WINDOW_SECS);
 
         let threshold_acquaintance = map
             .get("relationship_threshold_acquaintance")
@@ -368,6 +455,7 @@ impl ProcessRoleplayMessageUseCase {
                 })?,
             summarize_interval,
             relationship_thresholds,
+            reply_token_window_secs,
         })
     }
 
@@ -410,12 +498,17 @@ impl ProcessRoleplayMessageUseCase {
                         }]
                     };
 
-                if let Err(push_err) = self
-                    .line_client
-                    .push_messages(job.line_user_id(), error_messages)
-                    .await
+                if let Err(deliver_err) = deliver_response(
+                    self.line_client.as_ref(),
+                    job.line_user_id(),
+                    job.reply_token(),
+                    *job.created_at(),
+                    error_messages,
+                    DEFAULT_REPLY_TOKEN_WINDOW_SECS,
+                )
+                .await
                 {
-                    tracing::warn!(error = %push_err, "Failed to push error notification to user");
+                    tracing::warn!(error = %deliver_err, "Failed to deliver error notification to user");
                 }
 
                 tracing::error!(
@@ -530,6 +623,7 @@ impl ProcessRoleplayMessageUseCase {
                 "DEBUG: Step 6 — calling LLM..."
             );
 
+            let ai_start = Instant::now();
             let response = self
                 .ai_client
                 .generate_roleplay_response(AiRoleplayRequest {
@@ -538,6 +632,7 @@ impl ProcessRoleplayMessageUseCase {
                     max_tokens: cfg.ai_max_tokens,
                 })
                 .await?;
+            let ai_call_ms = ai_start.elapsed().as_millis();
 
             let block_details: Vec<String> = response
                 .blocks
@@ -559,11 +654,19 @@ impl ProcessRoleplayMessageUseCase {
                 current_location = ?response.current_location,
                 scene_time = ?response.scene_time,
                 content_text = %response.content_text(),
+                ai_call_ms,
                 "DEBUG: Step 6 — LLM response received"
             );
 
             match crate::infra::ai::response::validate_ai_response(&response) {
                 Ok(()) => {
+                    // METRIC: AI latency + how many attempts it took to get a valid response.
+                    tracing::info!(
+                        job_id = %job.id().as_uuid(),
+                        winning_attempt = attempt,
+                        ai_call_ms,
+                        "METRIC: AI generation validated"
+                    );
                     validated_response = Some(response);
                     break;
                 }
@@ -707,9 +810,23 @@ impl ProcessRoleplayMessageUseCase {
                 quick_reply: None,
             }];
 
-            self.line_client
-                .push_messages(job.line_user_id(), line_messages)
-                .await?;
+            let delivery_path = deliver_response(
+                self.line_client.as_ref(),
+                job.line_user_id(),
+                job.reply_token(),
+                *job.created_at(),
+                line_messages,
+                cfg.reply_token_window_secs,
+            )
+            .await?;
+
+            // METRIC: delivery path (cost) + end-to-end latency from event receipt.
+            tracing::info!(
+                job_id = %job.id().as_uuid(),
+                delivery_path = delivery_path.as_str(),
+                total_pipeline_ms = (Utc::now() - *job.created_at()).num_milliseconds(),
+                "METRIC: character response delivered"
+            );
         }
 
         // 11. Mark job completed
@@ -835,7 +952,133 @@ async fn run_summarization(
 mod tests {
     use super::*;
     use crate::domain::entities::{Character, Message, RoleplaySession, Scene};
+    use crate::domain::services::line_client::LineProfile;
     use crate::domain::value_objects::*;
+    use async_trait::async_trait;
+    use std::sync::Mutex;
+
+    /// Minimal LineClient fake: counts reply/push calls and can force reply failure.
+    struct FakeLine {
+        reply_fails: bool,
+        reply_calls: Mutex<u32>,
+        push_calls: Mutex<u32>,
+    }
+
+    impl FakeLine {
+        fn new(reply_fails: bool) -> Self {
+            Self {
+                reply_fails,
+                reply_calls: Mutex::new(0),
+                push_calls: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LineClient for FakeLine {
+        fn verify_signature(&self, _: &[u8], _: &str) -> Result<bool, LineClientError> {
+            unimplemented!()
+        }
+        async fn push_messages(&self, _: &str, _: Vec<LineMessage>) -> Result<(), LineClientError> {
+            *self.push_calls.lock().unwrap() += 1;
+            Ok(())
+        }
+        async fn reply_messages(
+            &self,
+            _: &str,
+            _: Vec<LineMessage>,
+        ) -> Result<(), LineClientError> {
+            *self.reply_calls.lock().unwrap() += 1;
+            if self.reply_fails {
+                Err(LineClientError::ApiError {
+                    status: 400,
+                    message: "Invalid reply token".into(),
+                })
+            } else {
+                Ok(())
+            }
+        }
+        async fn get_profile(&self, _: &str) -> Result<LineProfile, LineClientError> {
+            unimplemented!()
+        }
+        async fn link_rich_menu(&self, _: &str, _: &str) -> Result<(), LineClientError> {
+            unimplemented!()
+        }
+        async fn unlink_rich_menu(&self, _: &str) -> Result<(), LineClientError> {
+            unimplemented!()
+        }
+        async fn show_loading_animation(
+            &self,
+            _: &str,
+            _: Option<u32>,
+        ) -> Result<(), LineClientError> {
+            unimplemented!()
+        }
+        async fn verify_liff_token(&self, _: &str) -> Result<LineProfile, LineClientError> {
+            unimplemented!()
+        }
+    }
+
+    fn one_message() -> Vec<LineMessage> {
+        vec![LineMessage::Text {
+            text: "hi".into(),
+            sender_name: String::new(),
+            sender_icon_url: String::new(),
+        }]
+    }
+
+    #[test]
+    fn should_attempt_reply_gate() {
+        assert!(should_attempt_reply(Some("tok"), 10, 50));
+        assert!(!should_attempt_reply(Some("tok"), 50, 50)); // boundary: window reached
+        assert!(!should_attempt_reply(Some("tok"), 60, 50)); // expired
+        assert!(!should_attempt_reply(None, 0, 50)); // no token
+    }
+
+    #[tokio::test]
+    async fn deliver_uses_free_reply_when_token_fresh() {
+        let fake = FakeLine::new(false);
+        let path = deliver_response(&fake, "U1", Some("tok"), Utc::now(), one_message(), 50)
+            .await
+            .unwrap();
+        assert_eq!(path, DeliveryPath::ReplyFree);
+        assert_eq!(*fake.reply_calls.lock().unwrap(), 1);
+        assert_eq!(*fake.push_calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn deliver_falls_back_to_push_when_reply_fails() {
+        let fake = FakeLine::new(true);
+        let path = deliver_response(&fake, "U1", Some("tok"), Utc::now(), one_message(), 50)
+            .await
+            .unwrap();
+        assert_eq!(path, DeliveryPath::PushFallback);
+        assert_eq!(*fake.reply_calls.lock().unwrap(), 1);
+        assert_eq!(*fake.push_calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn deliver_pushes_directly_when_token_expired() {
+        let fake = FakeLine::new(false);
+        let old = Utc::now() - chrono::Duration::seconds(120);
+        let path = deliver_response(&fake, "U1", Some("tok"), old, one_message(), 50)
+            .await
+            .unwrap();
+        assert_eq!(path, DeliveryPath::PushDirect);
+        assert_eq!(*fake.reply_calls.lock().unwrap(), 0);
+        assert_eq!(*fake.push_calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn deliver_pushes_directly_when_no_token() {
+        let fake = FakeLine::new(false);
+        let path = deliver_response(&fake, "U1", None, Utc::now(), one_message(), 50)
+            .await
+            .unwrap();
+        assert_eq!(path, DeliveryPath::PushDirect);
+        assert_eq!(*fake.reply_calls.lock().unwrap(), 0);
+        assert_eq!(*fake.push_calls.lock().unwrap(), 1);
+    }
 
     fn test_character() -> Character {
         Character::from_existing(

@@ -41,6 +41,30 @@ struct TogetherMessage {
 #[derive(Deserialize)]
 struct TogetherResponse {
     choices: Vec<TogetherChoice>,
+    #[serde(default)]
+    usage: Option<TogetherUsage>,
+}
+
+/// Token usage from Together. `prompt_tokens_details.cached_tokens` is the
+/// definitive signal of whether prompt caching is active for this model — it is
+/// non-zero only on cache-eligible models, so it answers "does caching work for
+/// Qwen?" from production rather than from docs guesswork.
+#[derive(Deserialize, Default)]
+struct TogetherUsage {
+    #[serde(default)]
+    prompt_tokens: Option<u32>,
+    #[serde(default)]
+    completion_tokens: Option<u32>,
+    #[serde(default)]
+    total_tokens: Option<u32>,
+    #[serde(default)]
+    prompt_tokens_details: Option<TogetherPromptTokensDetails>,
+}
+
+#[derive(Deserialize, Default)]
+struct TogetherPromptTokensDetails {
+    #[serde(default)]
+    cached_tokens: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -155,6 +179,26 @@ impl AiClient for TogetherClient {
             serde_json::from_str(&response_text).map_err(|e| {
                 AiClientError::ParseError(format!("Failed to deserialize Together response: {e}"))
             })?;
+
+        // METRIC: token usage. `cached_tokens` > 0 confirms prompt caching is active
+        // for this model; consistently 0/absent means no cache benefit on Qwen, so
+        // the real lever becomes token reduction (history/static prompt), not caching.
+        if let Some(usage) = &together_resp.usage {
+            let cached_tokens = usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0);
+            tracing::info!(
+                provider = "together",
+                model = TOGETHER_MODEL,
+                prompt_tokens = usage.prompt_tokens.unwrap_or(0),
+                cached_tokens,
+                completion_tokens = usage.completion_tokens.unwrap_or(0),
+                total_tokens = usage.total_tokens.unwrap_or(0),
+                "METRIC: Together token usage"
+            );
+        }
 
         // Try tool call first
         if let Some(choice) = together_resp.choices.first() {

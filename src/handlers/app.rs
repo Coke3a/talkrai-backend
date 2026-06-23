@@ -389,15 +389,26 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CachedAppConfigRepository, CharacterPostgres, CreditPostgres,
-        JobPostgres, MessagePostgres, PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres,
-        TagDefinitionPostgres, UserPostgres,
+        AppConfigPostgres, CachedAppConfigRepository, CachedCharacterRepository,
+        CachedSceneRepository, CharacterPostgres, CreditPostgres, JobPostgres, MessagePostgres,
+        PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres, TagDefinitionPostgres,
+        UserPostgres,
     };
+
+    // Character/scene form a rarely-changing catalog read on every roleplay turn;
+    // cache them to drop two DB round-trips (and pool checkouts) per message.
+    let catalog_cache_ttl = std::time::Duration::from_secs(300);
 
     let repos = Repositories {
         user_repo: Arc::new(UserPostgres::new(Arc::clone(db_pool))),
-        character_repo: Arc::new(CharacterPostgres::new(Arc::clone(db_pool))),
-        scene_repo: Arc::new(ScenePostgres::new(Arc::clone(db_pool))),
+        character_repo: Arc::new(CachedCharacterRepository::new(
+            Arc::new(CharacterPostgres::new(Arc::clone(db_pool))),
+            catalog_cache_ttl,
+        )),
+        scene_repo: Arc::new(CachedSceneRepository::new(
+            Arc::new(ScenePostgres::new(Arc::clone(db_pool))),
+            catalog_cache_ttl,
+        )),
         session_repo: Arc::new(RoleplaySessionPostgres::new(Arc::clone(db_pool))),
         message_repo: Arc::new(MessagePostgres::new(Arc::clone(db_pool))),
         job_repo: Arc::new(JobPostgres::new(Arc::clone(db_pool))),

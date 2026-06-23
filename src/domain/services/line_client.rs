@@ -37,24 +37,18 @@ pub trait LineClient: Send + Sync {
     /// Verify LIFF access token by calling LINE Profile API with user's token
     async fn verify_liff_token(&self, access_token: &str) -> Result<LineProfile, LineClientError>;
 
-    /// Reply to a webhook event using a reply token (free, no push quota consumed)
+    /// Reply to a webhook event using a reply token (free, no push quota consumed).
+    /// Accepts the same `LineMessage` type as `push_messages` so callers can build
+    /// a message once and deliver it via either path (reply when the token is still
+    /// valid, push otherwise). `sender` overrides and quick replies are supported.
     async fn reply_messages(
         &self,
         reply_token: &str,
-        messages: Vec<LineReplyMessage>,
+        messages: Vec<LineMessage>,
     ) -> Result<(), LineClientError>;
 }
 
-pub enum LineReplyMessage {
-    Text {
-        text: String,
-    },
-    Flex {
-        alt_text: String,
-        contents: serde_json::Value,
-    },
-}
-
+#[derive(Clone)]
 pub enum LineMessage {
     Text {
         text: String,

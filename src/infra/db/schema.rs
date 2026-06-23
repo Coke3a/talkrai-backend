@@ -103,6 +103,7 @@ diesel::table! {
         failed_reason -> Nullable<Text>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        reply_token -> Nullable<Varchar>,
     }
 }
 

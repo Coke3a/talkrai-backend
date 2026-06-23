@@ -1,7 +1,10 @@
 pub mod error_mapping;
+pub mod ttl_cache;
 
 pub mod app_config_postgres;
 pub mod cached_app_config;
+pub mod cached_character;
+pub mod cached_scene;
 pub mod character_postgres;
 pub mod credit_postgres;
 pub mod job_postgres;
@@ -14,6 +17,8 @@ pub mod user_postgres;
 
 pub use app_config_postgres::AppConfigPostgres;
 pub use cached_app_config::CachedAppConfigRepository;
+pub use cached_character::CachedCharacterRepository;
+pub use cached_scene::CachedSceneRepository;
 pub use character_postgres::CharacterPostgres;
 pub use credit_postgres::CreditPostgres;
 pub use job_postgres::JobPostgres;

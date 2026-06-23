@@ -8,9 +8,7 @@ use sha2::Sha256;
 use unicode_segmentation::UnicodeSegmentation;
 use uuid::Uuid;
 
-use crate::domain::services::line_client::{
-    LineClient, LineMessage, LineProfile, LineReplyMessage,
-};
+use crate::domain::services::line_client::{LineClient, LineMessage, LineProfile};
 use crate::domain::services::LineClientError;
 
 const LINE_API_PUSH: &str = "https://api.line.me/v2/bot/message/push";
@@ -37,20 +35,7 @@ struct PushMessageRequest {
 #[serde(rename_all = "camelCase")]
 struct ReplyMessageRequest {
     reply_token: String,
-    messages: Vec<ReplyMessageObject>,
-}
-
-#[derive(Serialize, Clone)]
-#[serde(tag = "type")]
-enum ReplyMessageObject {
-    #[serde(rename = "text")]
-    Text { text: String },
-    #[serde(rename = "flex")]
-    Flex {
-        #[serde(rename = "altText")]
-        alt_text: String,
-        contents: serde_json::Value,
-    },
+    messages: Vec<serde_json::Value>,
 }
 
 /// Sanitize a display name for LINE's `sender.name` field.
@@ -94,13 +79,70 @@ fn sanitize_sender_name(raw: &str) -> String {
     }
 }
 
-/// Build the `sender` JSON object, omitting `name` when empty.
-fn build_sender_object(sender_name: &str, sender_icon_url: &str) -> Value {
+/// Build the `sender` JSON object (icon/display-name override).
+///
+/// Returns `None` when neither a name nor an icon is provided, so the caller
+/// omits `sender` entirely and LINE falls back to the bot's default identity.
+/// This matters for system messages (registration, errors) that should appear
+/// as the bot, while roleplay messages override both to the character.
+fn build_sender_object(sender_name: &str, sender_icon_url: &str) -> Option<Value> {
     let name = sanitize_sender_name(sender_name);
-    if name.is_empty() {
-        json!({ "iconUrl": sender_icon_url })
-    } else {
-        json!({ "name": name, "iconUrl": sender_icon_url })
+    let icon = sender_icon_url.trim();
+    match (name.is_empty(), icon.is_empty()) {
+        (true, true) => None,
+        (true, false) => Some(json!({ "iconUrl": icon })),
+        (false, true) => Some(json!({ "name": name })),
+        (false, false) => Some(json!({ "name": name, "iconUrl": icon })),
+    }
+}
+
+/// Build the LINE message JSON for one `LineMessage`. Shared by `push_messages`
+/// and `reply_messages` so a message is serialized identically regardless of the
+/// delivery path (sender override + quick reply applied the same way).
+fn build_message_json(m: LineMessage) -> Value {
+    match m {
+        LineMessage::Text {
+            text,
+            sender_name,
+            sender_icon_url,
+        } => {
+            let mut message = json!({ "type": "text", "text": text });
+            if let Some(sender) = build_sender_object(&sender_name, &sender_icon_url) {
+                message["sender"] = sender;
+            }
+            message
+        }
+        LineMessage::Flex {
+            alt_text,
+            contents,
+            sender_name,
+            sender_icon_url,
+            quick_reply,
+        } => {
+            let mut message = json!({
+                "type": "flex",
+                "altText": alt_text,
+                "contents": contents,
+            });
+            if let Some(sender) = build_sender_object(&sender_name, &sender_icon_url) {
+                message["sender"] = sender;
+            }
+            // Attach a quick reply only when the option texts survive LINE-spec
+            // validation; otherwise omit `quickReply` entirely.
+            if let Some(items) = quick_reply {
+                match build_quick_reply_object(&items) {
+                    Some(qr) => message["quickReply"] = qr,
+                    // Non-empty input but nothing survived validation: omit, but
+                    // leave a trace so bad Phase-2 data is observable.
+                    None if !items.is_empty() => tracing::warn!(
+                        item_count = items.len(),
+                        "quick reply omitted: all items failed LINE-spec validation"
+                    ),
+                    None => {}
+                }
+            }
+            message
+        }
     }
 }
 
@@ -225,54 +267,7 @@ impl LineClient for LineClientImpl {
     ) -> Result<(), LineClientError> {
         let body = PushMessageRequest {
             to: line_user_id.to_string(),
-            messages: messages
-                .into_iter()
-                .map(|m| match m {
-                    LineMessage::Text {
-                        text,
-                        sender_name,
-                        sender_icon_url,
-                    } => {
-                        let sender = build_sender_object(&sender_name, &sender_icon_url);
-                        json!({
-                            "type": "text",
-                            "text": text,
-                            "sender": sender
-                        })
-                    }
-                    LineMessage::Flex {
-                        alt_text,
-                        contents,
-                        sender_name,
-                        sender_icon_url,
-                        quick_reply,
-                    } => {
-                        let sender = build_sender_object(&sender_name, &sender_icon_url);
-                        let mut message = json!({
-                            "type": "flex",
-                            "altText": alt_text,
-                            "contents": contents,
-                            "sender": sender
-                        });
-                        // Attach a quick reply only when the option texts survive
-                        // LINE-spec validation; otherwise omit `quickReply` entirely.
-                        if let Some(items) = quick_reply {
-                            match build_quick_reply_object(&items) {
-                                Some(qr) => message["quickReply"] = qr,
-                                // Non-empty input but nothing survived validation:
-                                // omit quickReply, but leave a trace so bad Phase-2
-                                // data is observable rather than silently dropped.
-                                None if !items.is_empty() => tracing::warn!(
-                                    item_count = items.len(),
-                                    "quick reply omitted: all items failed LINE-spec validation"
-                                ),
-                                None => {}
-                            }
-                        }
-                        message
-                    }
-                })
-                .collect(),
+            messages: messages.into_iter().map(build_message_json).collect(),
         };
 
         // Same retry key across all attempts for idempotency
@@ -380,19 +375,11 @@ impl LineClient for LineClientImpl {
     async fn reply_messages(
         &self,
         reply_token: &str,
-        messages: Vec<LineReplyMessage>,
+        messages: Vec<LineMessage>,
     ) -> Result<(), LineClientError> {
         let body = ReplyMessageRequest {
             reply_token: reply_token.to_string(),
-            messages: messages
-                .into_iter()
-                .map(|m| match m {
-                    LineReplyMessage::Text { text } => ReplyMessageObject::Text { text },
-                    LineReplyMessage::Flex { alt_text, contents } => {
-                        ReplyMessageObject::Flex { alt_text, contents }
-                    }
-                })
-                .collect(),
+            messages: messages.into_iter().map(build_message_json).collect(),
         };
 
         let response = self
@@ -603,6 +590,54 @@ impl LineClient for LineClientImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sender_omitted_when_name_and_icon_empty() {
+        // System messages (registration, errors) carry no sender override →
+        // LINE must fall back to the bot's default identity, not an empty icon.
+        assert!(build_sender_object("", "").is_none());
+        assert!(build_sender_object("  ", "  ").is_none());
+    }
+
+    #[test]
+    fn sender_icon_only_when_name_empty() {
+        let s = build_sender_object("", "https://x/y.png").expect("sender");
+        assert_eq!(s["iconUrl"], "https://x/y.png");
+        assert!(s.get("name").is_none());
+    }
+
+    #[test]
+    fn sender_name_and_icon_when_both_present() {
+        let s = build_sender_object("มิโกะ", "https://x/y.png").expect("sender");
+        assert_eq!(s["name"], "มิโกะ");
+        assert_eq!(s["iconUrl"], "https://x/y.png");
+    }
+
+    #[test]
+    fn message_json_text_system_omits_sender() {
+        let v = build_message_json(LineMessage::Text {
+            text: "hi".into(),
+            sender_name: String::new(),
+            sender_icon_url: String::new(),
+        });
+        assert_eq!(v["type"], "text");
+        assert_eq!(v["text"], "hi");
+        assert!(v.get("sender").is_none());
+    }
+
+    #[test]
+    fn message_json_flex_applies_character_sender() {
+        let v = build_message_json(LineMessage::Flex {
+            alt_text: "alt".into(),
+            contents: json!({ "type": "bubble" }),
+            sender_name: "มิโกะ".into(),
+            sender_icon_url: "https://x/y.png".into(),
+            quick_reply: None,
+        });
+        assert_eq!(v["type"], "flex");
+        assert_eq!(v["sender"]["name"], "มิโกะ");
+        assert!(v.get("quickReply").is_none());
+    }
 
     #[test]
     fn builds_message_actions_for_valid_items() {

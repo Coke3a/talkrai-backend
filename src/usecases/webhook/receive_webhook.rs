@@ -7,7 +7,7 @@ use crate::domain::entities::{CreditBalance, Job, User};
 use crate::domain::repositories::{
     AppConfigRepository, CreditRepository, JobRepository, RoleplaySessionRepository, UserRepository,
 };
-use crate::domain::services::line_client::{LineClient, LineReplyMessage};
+use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::{JobId, JobMode, SessionId, UserId};
 use crate::infra::line::flex_messages;
 use crate::usecases::UsecaseError;
@@ -192,9 +192,12 @@ impl ReceiveWebhookUseCase {
                     let scenes_url = format!("{}/scenes", self.liff_base_url);
                     let flex_contents =
                         flex_messages::build_registration_required_flex(&scenes_url);
-                    let messages = vec![LineReplyMessage::Flex {
+                    let messages = vec![LineMessage::Flex {
                         alt_text: "กรุณาลงทะเบียนก่อนเล่นนะคะ".to_string(),
                         contents: flex_contents,
+                        sender_name: String::new(),
+                        sender_icon_url: String::new(),
+                        quick_reply: None,
                     }];
                     if let Err(e) = self.line_client.reply_messages(reply_token, messages).await {
                         tracing::warn!(
@@ -209,9 +212,11 @@ impl ReceiveWebhookUseCase {
                 let session = match self.session_repo.find_active_by_user_id(user.id()).await? {
                     Some(s) => s,
                     None => {
-                        let messages = vec![LineReplyMessage::Text {
+                        let messages = vec![LineMessage::Text {
                             text: "ยังไม่มีเรื่องราวที่กำลังเล่นอยู่ กดเมนูด้านล่างเพื่อเลือกฉากและเริ่มเล่นเลย!"
                                 .to_string(),
+                            sender_name: String::new(),
+                            sender_icon_url: String::new(),
                         }];
                         if let Err(e) = self.line_client.reply_messages(reply_token, messages).await
                         {
@@ -266,6 +271,7 @@ impl ReceiveWebhookUseCase {
                     user.id().clone(),
                     line_user_id.to_string(),
                     text,
+                    Some(reply_token.to_string()),
                 )
                 .await
                 .map(Some)
@@ -273,9 +279,11 @@ impl ReceiveWebhookUseCase {
             "sticker" => {
                 let _user = self.sync_user_from_line(line_user_id).await?;
                 if let Some(token) = reply_token {
-                    let messages = vec![LineReplyMessage::Text {
+                    let messages = vec![LineMessage::Text {
                         text: "ตอนนี้รองรับเฉพาะข้อความตัวอักษรเท่านั้นนะ ลองพิมพ์ข้อความมาแทนสติกเกอร์ดูนะ!"
                             .to_string(),
+                        sender_name: String::new(),
+                        sender_icon_url: String::new(),
                     }];
                     if let Err(e) = self.line_client.reply_messages(token, messages).await {
                         tracing::warn!(error = %e, "Failed to send sticker reply");
@@ -286,9 +294,11 @@ impl ReceiveWebhookUseCase {
             "image" => {
                 let _user = self.sync_user_from_line(line_user_id).await?;
                 if let Some(token) = reply_token {
-                    let messages = vec![LineReplyMessage::Text {
+                    let messages = vec![LineMessage::Text {
                         text: "ตอนนี้รองรับเฉพาะข้อความตัวอักษรเท่านั้นนะ ลองพิมพ์ข้อความมาแทนรูปภาพดูนะ!"
                             .to_string(),
+                        sender_name: String::new(),
+                        sender_icon_url: String::new(),
                     }];
                     if let Err(e) = self.line_client.reply_messages(token, messages).await {
                         tracing::warn!(error = %e, "Failed to send image reply");
@@ -334,9 +344,12 @@ impl ReceiveWebhookUseCase {
             });
         let flex_contents =
             flex_messages::build_welcome_flex(&scenes_url, hero_image_url.as_deref());
-        let messages = vec![LineReplyMessage::Flex {
+        let messages = vec![LineMessage::Flex {
             alt_text: "ยินดีต้อนรับสู่ TalkRai! เลือกตัวละครที่ชอบเลย".to_string(),
             contents: flex_contents,
+            sender_name: String::new(),
+            sender_icon_url: String::new(),
+            quick_reply: None,
         }];
 
         // Send Flex Message — non-fatal (reply token may have expired)
@@ -430,6 +443,7 @@ impl ReceiveWebhookUseCase {
             user.id().clone(),
             line_user_id.to_string(),
             postback_data,
+            None,
         )
         .await
     }
@@ -442,6 +456,7 @@ impl ReceiveWebhookUseCase {
             .ok_or_else(|| UsecaseError::Validation("Missing source userId".to_string()))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_and_dispatch_job(
         &self,
         mode: JobMode,
@@ -449,8 +464,10 @@ impl ReceiveWebhookUseCase {
         user_id: UserId,
         line_user_id: String,
         user_message: String,
+        reply_token: Option<String>,
     ) -> Result<JobId, UsecaseError> {
-        let job = Job::new(mode, session_id, user_id, line_user_id, user_message);
+        let job = Job::new(mode, session_id, user_id, line_user_id, user_message)
+            .with_reply_token(reply_token);
         let job_id = job.id().clone();
 
         self.job_repo.create(&job).await?;

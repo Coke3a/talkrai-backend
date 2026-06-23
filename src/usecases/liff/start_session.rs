@@ -234,7 +234,7 @@ mod tests {
     use super::*;
     use crate::domain::entities::{Character, RoleplaySession, Scene, User};
     use crate::domain::repositories::RepoError;
-    use crate::domain::services::line_client::{LineProfile, LineReplyMessage};
+    use crate::domain::services::line_client::LineProfile;
     use crate::domain::services::LineClientError;
     use crate::domain::value_objects::{
         CharacterGender, CharacterId, CharacterMood, CharacterName, RelationshipLevel, SceneId,
@@ -464,7 +464,7 @@ mod tests {
         async fn reply_messages(
             &self,
             _: &str,
-            _: Vec<LineReplyMessage>,
+            _: Vec<LineMessage>,
         ) -> Result<(), LineClientError> {
             Ok(())
         }

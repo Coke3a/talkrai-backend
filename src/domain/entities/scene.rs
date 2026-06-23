@@ -4,6 +4,7 @@ use crate::domain::value_objects::{
     CharacterId, CharacterMood, RelationshipLevel, SceneId, SceneName,
 };
 
+#[derive(Clone)]
 pub struct Scene {
     id: SceneId,
     character_id: CharacterId,

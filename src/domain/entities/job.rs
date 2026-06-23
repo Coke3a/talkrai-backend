@@ -16,6 +16,10 @@ pub struct Job {
     locked_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
     failed_reason: Option<String>,
+    /// LINE reply token captured from the originating webhook event.
+    /// Present only for message-event jobs; lets the response be delivered via
+    /// the free reply API while the token is still valid (else falls back to push).
+    reply_token: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -42,9 +46,17 @@ impl Job {
             locked_at: None,
             completed_at: None,
             failed_reason: None,
+            reply_token: None,
             created_at: now,
             updated_at: now,
         }
+    }
+
+    /// Attach the LINE reply token from the originating webhook event.
+    /// Chainable on `new()`; only message-event jobs need it.
+    pub fn with_reply_token(mut self, reply_token: Option<String>) -> Self {
+        self.reply_token = reply_token;
+        self
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -61,6 +73,7 @@ impl Job {
         locked_at: Option<DateTime<Utc>>,
         completed_at: Option<DateTime<Utc>>,
         failed_reason: Option<String>,
+        reply_token: Option<String>,
         created_at: DateTime<Utc>,
         updated_at: DateTime<Utc>,
     ) -> Self {
@@ -77,6 +90,7 @@ impl Job {
             locked_at,
             completed_at,
             failed_reason,
+            reply_token,
             created_at,
             updated_at,
         }
@@ -128,6 +142,10 @@ impl Job {
 
     pub fn failed_reason(&self) -> Option<&str> {
         self.failed_reason.as_deref()
+    }
+
+    pub fn reply_token(&self) -> Option<&str> {
+        self.reply_token.as_deref()
     }
 
     pub fn created_at(&self) -> &DateTime<Utc> {

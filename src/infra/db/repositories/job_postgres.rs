@@ -33,6 +33,7 @@ struct JobRow {
     failed_reason: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    reply_token: Option<String>,
 }
 
 impl JobRow {
@@ -50,6 +51,7 @@ impl JobRow {
             self.locked_at,
             self.completed_at,
             self.failed_reason,
+            self.reply_token,
             self.created_at,
             self.updated_at,
         )
@@ -71,6 +73,7 @@ struct NewJobRow<'a> {
     locked_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
     failed_reason: Option<&'a str>,
+    reply_token: Option<&'a str>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -90,6 +93,7 @@ impl<'a> NewJobRow<'a> {
             locked_at: entity.locked_at().copied(),
             completed_at: entity.completed_at().copied(),
             failed_reason: entity.failed_reason(),
+            reply_token: entity.reply_token(),
             created_at: *entity.created_at(),
             updated_at: *entity.updated_at(),
         }
