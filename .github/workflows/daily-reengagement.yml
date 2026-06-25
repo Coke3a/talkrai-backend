@@ -1,12 +1,17 @@
 name: Daily Re-engagement
 
+# DISABLED 2026-06-26: daily auto re-engagement is paused before launch.
+# The schedule below is commented out, so no reminders are sent automatically.
+# workflow_dispatch stays enabled, so the job can still be run by hand to test.
+# To re-enable the nightly send, uncomment the schedule block.
+#
 # Fires the idempotent internal endpoint that enqueues evening reminder jobs (spec §C.7).
 # 13:00 UTC = 20:00 ICT — the product's "alone at night" prime moment.
 # GitHub cron can drift under load; if exact timing matters later, move to a Fly.io scheduled
 # machine in sin. The backend is unchanged either way.
 on:
-  schedule:
-    - cron: "0 13 * * *"
+  # schedule:
+  #   - cron: "0 13 * * *"
   workflow_dispatch: {}
 
 jobs:
