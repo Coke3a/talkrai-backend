@@ -126,6 +126,23 @@ impl JobRepository for JobPostgres {
         Ok(())
     }
 
+    async fn create_many(&self, jobs: &[Job]) -> Result<(), RepoError> {
+        if jobs.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        let rows: Vec<NewJobRow> = jobs.iter().map(NewJobRow::from_entity).collect();
+
+        diesel::insert_into(jobs::table)
+            .values(&rows)
+            .execute(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("job.create_many", e))?;
+
+        Ok(())
+    }
+
     async fn find_by_id(&self, id: &JobId) -> Result<Option<Job>, RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 
@@ -153,6 +170,30 @@ impl JobRepository for JobPostgres {
             .map_err(|e| map_diesel_error("job.lock_pending_job", e))?;
 
         Ok(result.map(|row| row.into_entity()))
+    }
+
+    async fn mark_processing_if_pending(&self, job: &Job) -> Result<bool, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+
+        // Compare-and-set: only one worker can flip a row out of 'pending'. A concurrent worker
+        // that also read the job while it was pending will match 0 rows here (status is now
+        // 'processing') and learn it lost the claim — no second push.
+        let rows_affected = diesel::update(
+            jobs::table
+                .filter(jobs::id.eq(job.id().as_uuid()))
+                .filter(jobs::status.eq("pending")),
+        )
+        .set((
+            jobs::status.eq(job.status().as_str()),
+            jobs::attempts.eq(job.attempts()),
+            jobs::locked_at.eq(job.locked_at()),
+            jobs::updated_at.eq(job.updated_at()),
+        ))
+        .execute(&mut conn)
+        .await
+        .map_err(|e| map_diesel_error("job.mark_processing_if_pending", e))?;
+
+        Ok(rows_affected == 1)
     }
 
     async fn find_and_lock_pending_jobs(&self, limit: i64) -> Result<Vec<Job>, RepoError> {

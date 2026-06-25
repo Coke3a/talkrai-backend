@@ -140,6 +140,9 @@ pub(crate) struct CurrentSessionData {
     pub message_count: i32,
     pub scene_summary: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub relationship_progress: f32,
+    pub next_level_label: Option<String>,
+    pub messages_to_next: Option<i32>,
 }
 
 #[utoipa::path(
@@ -175,6 +178,9 @@ pub(crate) async fn get_current_session_handler(
         message_count: s.message_count,
         scene_summary: s.scene_summary,
         created_at: s.created_at,
+        relationship_progress: s.relationship_progress,
+        next_level_label: s.next_level_label,
+        messages_to_next: s.messages_to_next,
     });
 
     Ok((StatusCode::OK, Json(CurrentSessionResponse { session })))
@@ -187,6 +193,9 @@ pub(crate) struct ProfileResponse {
     pub created_at: DateTime<Utc>,
     pub total_sessions: i64,
     pub total_messages: i64,
+    pub check_in_streak: i32,
+    pub longest_streak: i32,
+    pub next_milestone_in: Option<i32>,
 }
 
 #[utoipa::path(
@@ -215,6 +224,9 @@ pub(crate) async fn get_profile_handler(
             created_at: output.created_at,
             total_sessions: output.total_sessions,
             total_messages: output.total_messages,
+            check_in_streak: output.check_in_streak,
+            longest_streak: output.longest_streak,
+            next_milestone_in: output.next_milestone_in,
         }),
     ))
 }

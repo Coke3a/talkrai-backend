@@ -12,6 +12,10 @@ diesel::table! {
         terms_accepted_at -> Nullable<Timestamptz>,
         created_at -> Timestamptz,
         updated_at -> Timestamptz,
+        check_in_streak -> Int4,
+        longest_streak -> Int4,
+        last_check_in_on -> Nullable<Date>,
+        last_reminder_sent_on -> Nullable<Date>,
     }
 }
 

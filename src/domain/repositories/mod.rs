@@ -20,4 +20,4 @@ pub use payment_order_repository::PaymentOrderRepository;
 pub use roleplay_session_repository::RoleplaySessionRepository;
 pub use scene_repository::SceneRepository;
 pub use tag_definition_repository::TagDefinitionRepository;
-pub use user_repository::UserRepository;
+pub use user_repository::{ReengagementTarget, UserRepository};

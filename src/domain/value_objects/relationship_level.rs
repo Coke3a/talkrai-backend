@@ -36,6 +36,16 @@ impl RelationshipLevel {
             Self::CloseFriend => None,
         }
     }
+
+    /// Thai display label for the relationship level (spec §B.6).
+    pub fn label_th(&self) -> &'static str {
+        match self {
+            Self::Stranger => "คนแปลกหน้า",
+            Self::Acquaintance => "คนรู้จัก",
+            Self::Friend => "เพื่อน",
+            Self::CloseFriend => "คนสนิท",
+        }
+    }
 }
 
 impl std::str::FromStr for RelationshipLevel {

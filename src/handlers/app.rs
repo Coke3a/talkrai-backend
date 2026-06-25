@@ -31,7 +31,7 @@ use utoipa_swagger_ui::SwaggerUi;
 
 use crate::domain::services::beam_client::BeamClient;
 use crate::handlers::openapi::ApiDoc;
-use crate::handlers::routers::{default, liff, webhook};
+use crate::handlers::routers::{default, internal, liff, webhook};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::usecases::background_jobs::{JobPollerUseCase, StaleJobCleanupUseCase};
 use crate::usecases::liff::create_payment::CreatePaymentUseCase;
@@ -44,6 +44,9 @@ use crate::usecases::liff::get_profile::GetProfileUseCase;
 use crate::usecases::liff::get_scenes::GetScenesUseCase;
 use crate::usecases::liff::get_tags::GetTagsUseCase;
 use crate::usecases::liff::start_session::StartSessionUseCase;
+use crate::usecases::reengagement::enqueue_reengagement_reminders::EnqueueReengagementRemindersUseCase;
+use crate::usecases::reengagement::send_reengagement_reminder::SendReengagementReminderUseCase;
+use crate::usecases::webhook::apply_daily_check_in::ApplyDailyCheckInUseCase;
 use crate::usecases::webhook::process_beam_webhook::ProcessBeamWebhookUseCase;
 use crate::usecases::webhook::process_roleplay_message::ProcessRoleplayMessageUseCase;
 use crate::usecases::webhook::receive_webhook::ReceiveWebhookUseCase;
@@ -67,6 +70,7 @@ pub struct AppState {
     pub create_payment_usecase: Arc<CreatePaymentUseCase>,
     pub get_payment_status_usecase: Arc<GetPaymentStatusUseCase>,
     pub process_beam_webhook_usecase: Arc<ProcessBeamWebhookUseCase>,
+    pub enqueue_reengagement_usecase: Arc<EnqueueReengagementRemindersUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -117,6 +121,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&repos.user_repo),
         Arc::clone(&repos.session_repo),
         Arc::clone(&repos.message_repo),
+        Arc::clone(&config_repo),
     ));
 
     let get_credit_balance_usecase = Arc::new(GetCreditBalanceUseCase::new(
@@ -134,6 +139,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&repos.session_repo),
         Arc::clone(&repos.character_repo),
         Arc::clone(&repos.scene_repo),
+        Arc::clone(&config_repo),
     ));
 
     let get_tags_usecase = Arc::new(GetTagsUseCase::new(Arc::clone(&repos.tag_def_repo)));
@@ -160,6 +166,12 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         config.beam.hmac_key.clone(),
     ));
 
+    let enqueue_reengagement_usecase = Arc::new(EnqueueReengagementRemindersUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.job_repo),
+        Arc::clone(&config_repo),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -178,6 +190,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         create_payment_usecase,
         get_payment_status_usecase,
         process_beam_webhook_usecase,
+        enqueue_reengagement_usecase,
     };
 
     let app = build_router(state, &config);
@@ -257,6 +270,7 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
             post(webhook::beam_payment::beam_webhook_handler),
         )
         .nest("/api", liff::router())
+        .nest("/internal", internal::router())
         .route(
             "/health-check",
             get(default::health_check::health_check_handler),
@@ -287,6 +301,12 @@ fn spawn_background_tasks(
     job_receiver: mpsc::Receiver<JobId>,
     cancel: CancellationToken,
 ) -> Vec<JoinHandle<()>> {
+    let check_in_usecase = Arc::new(ApplyDailyCheckInUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.credit_repo),
+        Arc::clone(config_repo),
+    ));
+
     let process_usecase = Arc::new(ProcessRoleplayMessageUseCase::new(
         Arc::clone(&repos.job_repo),
         Arc::clone(&repos.session_repo),
@@ -294,16 +314,26 @@ fn spawn_background_tasks(
         Arc::clone(&repos.scene_repo),
         Arc::clone(&repos.message_repo),
         Arc::clone(&repos.credit_repo),
+        Arc::clone(&repos.user_repo),
         Arc::clone(ai_client),
         Arc::clone(line_client),
         Arc::clone(config_repo),
+        check_in_usecase,
         config.line.liff_base_url.clone(),
+    ));
+
+    let reengagement_send_usecase = Arc::new(SendReengagementReminderUseCase::new(
+        Arc::clone(&repos.job_repo),
+        Arc::clone(&repos.session_repo),
+        Arc::clone(&repos.character_repo),
+        Arc::clone(line_client),
     ));
 
     let dispatcher = Arc::new(
         crate::handlers::background_jobs::job_dispatcher::JobDispatcher::new(
             Arc::clone(&repos.job_repo),
             process_usecase,
+            reengagement_send_usecase,
         ),
     );
 

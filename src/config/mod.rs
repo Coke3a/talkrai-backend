@@ -7,6 +7,18 @@ pub struct DotEnvyConfig {
     pub ai: AiConfig,
     pub beam: BeamConfig,
     pub background_tasks: BackgroundTasksConfig,
+    pub dev: DevConfig,
+    pub internal: InternalConfig,
+}
+
+pub struct DevConfig {
+    pub auth_bypass_enabled: bool,
+    pub test_line_user_id: String,
+    pub test_access_token: String,
+}
+
+pub struct InternalConfig {
+    pub api_token: String,
 }
 
 pub struct ServerConfig {

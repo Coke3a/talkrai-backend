@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use crate::domain::entities::{Character, Job, Message, RoleplaySession, Scene};
 use crate::domain::repositories::{
     AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
-    RoleplaySessionRepository, SceneRepository,
+    RoleplaySessionRepository, SceneRepository, UserRepository,
 };
 use crate::domain::services::ai_client::{
     AiClient, AiMessage, AiRoleplayRequest, AiSummaryRequest,
@@ -17,7 +17,9 @@ use crate::domain::services::LineClientError;
 use crate::domain::value_objects::{
     CharacterMood, JobId, MessageRole, RelationshipThresholds, SessionId,
 };
-use crate::infra::line::{flex_messages, roleplay_flex};
+use crate::infra::clock::bangkok_today;
+use crate::infra::line::{flex_messages, retention_flex, roleplay_flex};
+use crate::usecases::webhook::apply_daily_check_in::ApplyDailyCheckInUseCase;
 use crate::usecases::UsecaseError;
 
 /// Convert JSON atmosphere blob to compact readable text.
@@ -323,9 +325,11 @@ pub struct ProcessRoleplayMessageUseCase {
     scene_repo: Arc<dyn SceneRepository>,
     message_repo: Arc<dyn MessageRepository>,
     credit_repo: Arc<dyn CreditRepository>,
+    user_repo: Arc<dyn UserRepository>,
     ai_client: Arc<dyn AiClient>,
     line_client: Arc<dyn LineClient>,
     config_repo: Arc<dyn AppConfigRepository>,
+    check_in_usecase: Arc<ApplyDailyCheckInUseCase>,
     liff_base_url: String,
 }
 
@@ -349,9 +353,11 @@ impl ProcessRoleplayMessageUseCase {
         scene_repo: Arc<dyn SceneRepository>,
         message_repo: Arc<dyn MessageRepository>,
         credit_repo: Arc<dyn CreditRepository>,
+        user_repo: Arc<dyn UserRepository>,
         ai_client: Arc<dyn AiClient>,
         line_client: Arc<dyn LineClient>,
         config_repo: Arc<dyn AppConfigRepository>,
+        check_in_usecase: Arc<ApplyDailyCheckInUseCase>,
         liff_base_url: String,
     ) -> Self {
         Self {
@@ -361,9 +367,11 @@ impl ProcessRoleplayMessageUseCase {
             scene_repo,
             message_repo,
             credit_repo,
+            user_repo,
             ai_client,
             line_client,
             config_repo,
+            check_in_usecase,
             liff_base_url,
         }
     }
@@ -469,7 +477,13 @@ impl ProcessRoleplayMessageUseCase {
             .ok_or_else(|| UsecaseError::NotFound("Job not found or already locked".into()))?;
 
         job.lock()?;
-        self.job_repo.update(&job).await?;
+        // Atomic claim: if another worker (mpsc fast path vs DB poller) already flipped this job
+        // to processing between our read and now, bail without processing so we never double-push.
+        if !self.job_repo.mark_processing_if_pending(&job).await? {
+            return Err(UsecaseError::NotFound(
+                "Job already claimed by another worker".into(),
+            ));
+        }
 
         // Delegate to inner pipeline — on error, mark job as failed
         match self.process_job(&mut job).await {
@@ -539,7 +553,7 @@ impl ProcessRoleplayMessageUseCase {
             .ok_or_else(|| UsecaseError::NotFound("Session not found".into()))?;
 
         // Parallel fetch: character, scene, messages, credits, config
-        let (character_opt, scene_opt, recent_messages, credit_balance_opt, cfg) = tokio::try_join!(
+        let (character_opt, scene_opt, recent_messages, credit_balance_opt, cfg, user_opt) = tokio::try_join!(
             async {
                 self.character_repo
                     .find_by_id(session.character_id())
@@ -565,6 +579,12 @@ impl ProcessRoleplayMessageUseCase {
                     .map_err(UsecaseError::from)
             },
             self.resolve_config(),
+            async {
+                self.user_repo
+                    .find_by_id(session.user_id())
+                    .await
+                    .map_err(UsecaseError::from)
+            },
         )?;
 
         let character =
@@ -581,17 +601,27 @@ impl ProcessRoleplayMessageUseCase {
             "DEBUG: Step 2 — context loaded"
         );
 
-        // 3. Check credits
-        let credit_balance = credit_balance_opt
+        // 3a. Daily check-in BEFORE the credit check (deadlock fix, spec §C.4): a returning user
+        //     with 0 credits is topped up by their first message of the day so they can chat again.
+        let mut user = user_opt.ok_or_else(|| UsecaseError::NotFound("User not found".into()))?;
+        let mut credit_balance = credit_balance_opt
             .ok_or_else(|| UsecaseError::NotFound("Credit balance not found".into()))?;
 
-        tracing::info!(
-            job_id = %job.id().as_uuid(),
-            user_id = %session.user_id().as_uuid(),
-            credit_balance = credit_balance.balance(),
-            "DEBUG: Step 3 — credit check"
-        );
+        let today = bangkok_today();
+        let check_in_outcome = self
+            .check_in_usecase
+            .run(&mut user, &mut credit_balance, today)
+            .await?;
+        if let Some(outcome) = &check_in_outcome {
+            tracing::info!(
+                user_id = %session.user_id().as_uuid(),
+                streak = outcome.new_streak,
+                credits_awarded = outcome.credits_awarded,
+                "Daily check-in applied"
+            );
+        }
 
+        // 3b. Check credits (now funded by any check-in grant)
         if !credit_balance.has_sufficient_credits(2) {
             return Err(UsecaseError::InsufficientCredits);
         }
@@ -758,7 +788,7 @@ impl ProcessRoleplayMessageUseCase {
         let level_up = session.increment_messages(&cfg.relationship_thresholds);
         self.session_repo.update(&session).await?;
 
-        if let Some(new_level) = level_up {
+        if let Some(new_level) = &level_up {
             tracing::info!(
                 session_id = %session.id().as_uuid(),
                 new_level = new_level.as_str(),
@@ -802,13 +832,45 @@ impl ProcessRoleplayMessageUseCase {
                 "DEBUG: Step 10 — pushing LINE Flex message"
             );
 
-            let line_messages = vec![LineMessage::Flex {
+            let mut line_messages: Vec<LineMessage> = Vec::new();
+
+            // Check-in greeting rides ahead of the first reply of the day (same push batch).
+            if let Some(outcome) = &check_in_outcome {
+                line_messages.push(LineMessage::Flex {
+                    alt_text: format!("ยินดีที่กลับมานะ 🌙 (ต่อเนื่องวันที่ {})", outcome.new_streak),
+                    contents: retention_flex::build_daily_checkin_flex(
+                        character.name().as_str(),
+                        outcome.new_streak,
+                        outcome.credits_awarded,
+                    ),
+                    sender_name: character.name().as_str().to_string(),
+                    sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                    quick_reply: None,
+                });
+            }
+
+            line_messages.push(LineMessage::Flex {
                 alt_text,
                 contents: bubble,
                 sender_name: character.name().as_str().to_string(),
                 sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
                 quick_reply: None,
-            }];
+            });
+
+            // Level-up celebration appended after the reply (the felt payoff).
+            if let Some(new_level) = &level_up {
+                line_messages.push(LineMessage::Flex {
+                    alt_text: format!("ความสัมพันธ์ลึกขึ้นเป็น {} แล้ว 💗", new_level.label_th()),
+                    contents: retention_flex::build_levelup_flex(
+                        character.name().as_str(),
+                        new_level.label_th(),
+                        character.avatar_url(),
+                    ),
+                    sender_name: character.name().as_str().to_string(),
+                    sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                    quick_reply: None,
+                });
+            }
 
             let delivery_path = deliver_response(
                 self.line_client.as_ref(),

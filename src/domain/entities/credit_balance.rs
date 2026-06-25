@@ -109,4 +109,37 @@ impl CreditBalance {
             Some("Roleplay message credit".to_string()),
         ))
     }
+
+    /// Add credits (grant) — returns the CreditTransaction for logging. Mirrors `deduct` so the
+    /// in-memory balance stays consistent with what `CreditRepository::add_and_log` writes to the
+    /// DB, letting a downstream credit check see a just-granted top-up without a re-fetch.
+    pub fn add(
+        &mut self,
+        amount: i32,
+        transaction_type: CreditTransactionType,
+        reference_id: Option<Uuid>,
+        description: Option<String>,
+    ) -> Result<CreditTransaction, DomainError> {
+        if amount <= 0 {
+            return Err(DomainError::InvalidField {
+                field: "amount",
+                reason: "credit amount must be positive",
+            });
+        }
+        self.balance += amount;
+        // total_purchased counts paid credits only — bonus/refund/adjustment leave it untouched.
+        if transaction_type == CreditTransactionType::Purchase {
+            self.total_purchased += amount;
+        }
+        self.updated_at = Utc::now();
+
+        Ok(CreditTransaction::new(
+            self.user_id.clone(),
+            transaction_type,
+            amount,
+            self.balance,
+            reference_id,
+            description,
+        ))
+    }
 }

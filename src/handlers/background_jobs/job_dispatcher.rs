@@ -2,6 +2,9 @@ use std::sync::Arc;
 
 use crate::domain::repositories::JobRepository;
 use crate::domain::value_objects::{JobId, JobMode};
+use crate::usecases::reengagement::send_reengagement_reminder::{
+    SendReengagementReminderInput, SendReengagementReminderUseCase,
+};
 use crate::usecases::webhook::process_roleplay_message::{
     ProcessRoleplayMessageInput, ProcessRoleplayMessageUseCase,
 };
@@ -10,16 +13,19 @@ use crate::usecases::UsecaseError;
 pub struct JobDispatcher {
     job_repo: Arc<dyn JobRepository>,
     roleplay_usecase: Arc<ProcessRoleplayMessageUseCase>,
+    reengagement_usecase: Arc<SendReengagementReminderUseCase>,
 }
 
 impl JobDispatcher {
     pub fn new(
         job_repo: Arc<dyn JobRepository>,
         roleplay_usecase: Arc<ProcessRoleplayMessageUseCase>,
+        reengagement_usecase: Arc<SendReengagementReminderUseCase>,
     ) -> Self {
         Self {
             job_repo,
             roleplay_usecase,
+            reengagement_usecase,
         }
     }
 
@@ -36,6 +42,11 @@ impl JobDispatcher {
                     .execute(ProcessRoleplayMessageInput { job_id })
                     .await
             }
+            JobMode::ReengagementReminder => {
+                self.reengagement_usecase
+                    .execute(SendReengagementReminderInput { job_id })
+                    .await
+            }
             other => self.handle_stub(&job_id, other).await,
         }
     }
@@ -48,7 +59,12 @@ impl JobDispatcher {
             .ok_or_else(|| UsecaseError::NotFound("Job not found or already locked".into()))?;
 
         job.lock()?;
-        self.job_repo.update(&job).await?;
+        // Atomic claim — bail if another worker already took this job (see JobRepository docs).
+        if !self.job_repo.mark_processing_if_pending(&job).await? {
+            return Err(UsecaseError::NotFound(
+                "Job already claimed by another worker".into(),
+            ));
+        }
 
         tracing::info!(
             job_id = %job_id.as_uuid(),

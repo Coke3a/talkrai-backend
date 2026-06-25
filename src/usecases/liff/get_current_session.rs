@@ -4,8 +4,10 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::domain::repositories::{
-    CharacterRepository, RoleplaySessionRepository, SceneRepository, UserRepository,
+    AppConfigRepository, CharacterRepository, RoleplaySessionRepository, SceneRepository,
+    UserRepository,
 };
+use crate::domain::value_objects::{RelationshipProgress, RelationshipThresholds};
 use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
 
@@ -26,6 +28,12 @@ pub struct CurrentSessionData {
     pub message_count: i32,
     pub scene_summary: Option<String>,
     pub created_at: DateTime<Utc>,
+    /// Progress within the current relationship segment toward the next level (0.0..=1.0).
+    pub relationship_progress: f32,
+    /// Thai label of the next level, or `None` at the top level.
+    pub next_level_label: Option<String>,
+    /// Messages remaining to the next level, or `None` at the top level.
+    pub messages_to_next: Option<i32>,
 }
 
 pub struct GetCurrentSessionOutput {
@@ -37,6 +45,7 @@ pub struct GetCurrentSessionUseCase {
     session_repo: Arc<dyn RoleplaySessionRepository>,
     character_repo: Arc<dyn CharacterRepository>,
     scene_repo: Arc<dyn SceneRepository>,
+    config_repo: Arc<dyn AppConfigRepository>,
 }
 
 impl GetCurrentSessionUseCase {
@@ -45,12 +54,57 @@ impl GetCurrentSessionUseCase {
         session_repo: Arc<dyn RoleplaySessionRepository>,
         character_repo: Arc<dyn CharacterRepository>,
         scene_repo: Arc<dyn SceneRepository>,
+        config_repo: Arc<dyn AppConfigRepository>,
     ) -> Self {
         Self {
             user_repo,
             session_repo,
             character_repo,
             scene_repo,
+            config_repo,
+        }
+    }
+
+    /// Reads the relationship thresholds from `app_config`. Unlike the message pipeline (where a
+    /// missing threshold means the game is broken and erroring is correct), this is a read-only
+    /// status display: the meter is an enhancement, so a config gap degrades to the seeded
+    /// defaults (8/24/70) rather than 500-ing the whole status page.
+    async fn load_thresholds(&self) -> Result<RelationshipThresholds, UsecaseError> {
+        const DEFAULTS: (u32, u32, u32) = (8, 24, 70);
+        let map = self
+            .config_repo
+            .get_many(&[
+                "relationship_threshold_acquaintance",
+                "relationship_threshold_friend",
+                "relationship_threshold_close_friend",
+            ])
+            .await?;
+        let read = |key: &str, default: u32| -> u32 {
+            match map.get(key).and_then(|v| v.parse::<u32>().ok()) {
+                Some(v) => v,
+                None => {
+                    tracing::warn!(key, "Missing/invalid relationship threshold; using default");
+                    default
+                }
+            }
+        };
+        let (a, f, cf) = (
+            read("relationship_threshold_acquaintance", DEFAULTS.0),
+            read("relationship_threshold_friend", DEFAULTS.1),
+            read("relationship_threshold_close_friend", DEFAULTS.2),
+        );
+        // `new` only rejects non-monotonic thresholds (possible from a partial misconfig); fall
+        // back to the known-valid defaults rather than failing the request.
+        match RelationshipThresholds::new(a, f, cf) {
+            Ok(t) => Ok(t),
+            Err(_) => {
+                tracing::warn!(
+                    "Non-monotonic relationship thresholds in app_config; using defaults"
+                );
+                RelationshipThresholds::new(DEFAULTS.0, DEFAULTS.1, DEFAULTS.2).map_err(|e| {
+                    UsecaseError::Infra(anyhow::anyhow!("default thresholds invalid: {e}"))
+                })
+            }
         }
     }
 
@@ -79,6 +133,13 @@ impl GetCurrentSessionUseCase {
             .await?
             .ok_or_else(|| UsecaseError::NotFound("Scene not found".to_string()))?;
 
+        let thresholds = self.load_thresholds().await?;
+        let progress = RelationshipProgress::compute(
+            session.relationship_level(),
+            session.message_count(),
+            &thresholds,
+        );
+
         Ok(GetCurrentSessionOutput {
             session: Some(CurrentSessionData {
                 id: *session.id().as_uuid(),
@@ -93,6 +154,9 @@ impl GetCurrentSessionUseCase {
                 message_count: session.message_count(),
                 scene_summary: session.scene_summary().map(|s| s.to_string()),
                 created_at: *session.created_at(),
+                relationship_progress: progress.fraction,
+                next_level_label: progress.next_level_label,
+                messages_to_next: progress.messages_to_next,
             }),
         })
     }

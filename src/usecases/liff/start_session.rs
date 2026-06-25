@@ -270,6 +270,10 @@ mod tests {
             Some(Utc::now()), // terms already accepted -> skip update path
             Utc::now(),
             Utc::now(),
+            0,
+            0,
+            None,
+            None,
         )
     }
 
@@ -331,6 +335,17 @@ mod tests {
             Ok(())
         }
         async fn update(&self, _: &User) -> Result<(), RepoError> {
+            Ok(())
+        }
+        async fn find_reengagement_targets(
+            &self,
+            _: chrono::NaiveDate,
+            _: i64,
+            _: i64,
+        ) -> Result<Vec<crate::domain::repositories::ReengagementTarget>, RepoError> {
+            Ok(vec![])
+        }
+        async fn mark_reminded(&self, _: &[UserId], _: chrono::NaiveDate) -> Result<(), RepoError> {
             Ok(())
         }
     }

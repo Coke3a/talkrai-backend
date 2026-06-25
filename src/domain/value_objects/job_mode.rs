@@ -8,6 +8,7 @@ pub enum JobMode {
     FollowEvent,
     UnfollowEvent,
     PostbackEvent,
+    ReengagementReminder,
 }
 
 impl JobMode {
@@ -19,6 +20,7 @@ impl JobMode {
             Self::FollowEvent => "follow_event",
             Self::UnfollowEvent => "unfollow_event",
             Self::PostbackEvent => "postback_event",
+            Self::ReengagementReminder => "reengagement_reminder",
         }
     }
 }
@@ -34,6 +36,7 @@ impl std::str::FromStr for JobMode {
             "follow_event" => Ok(Self::FollowEvent),
             "unfollow_event" => Ok(Self::UnfollowEvent),
             "postback_event" => Ok(Self::PostbackEvent),
+            "reengagement_reminder" => Ok(Self::ReengagementReminder),
             _ => Err(DomainError::InvalidField {
                 field: "job_mode",
                 reason: "invalid job mode value",

@@ -225,6 +225,16 @@ impl CreditRepository for CreditPostgres {
         let user_uuid = *user_id.as_uuid();
         let now = Utc::now();
         let new_txn = NewCreditTransactionRow::from_entity(transaction);
+        // total_purchased counts paid credits only; bonus/refund/adjustment must not inflate it
+        // (it is surfaced via GET /api/credits/balance).
+        let purchased_delta = if matches!(
+            transaction.transaction_type(),
+            CreditTransactionType::Purchase
+        ) {
+            amount
+        } else {
+            0
+        };
 
         conn.transaction::<_, diesel::result::Error, _>(|conn| {
             async move {
@@ -233,7 +243,8 @@ impl CreditRepository for CreditPostgres {
                 )
                 .set((
                     credit_balances::balance.eq(credit_balances::balance + amount),
-                    credit_balances::total_purchased.eq(credit_balances::total_purchased + amount),
+                    credit_balances::total_purchased
+                        .eq(credit_balances::total_purchased + purchased_delta),
                     credit_balances::updated_at.eq(now),
                 ))
                 .execute(conn)

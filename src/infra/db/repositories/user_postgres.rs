@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use diesel::prelude::*;
 use diesel_async::RunQueryDsl;
 use uuid::Uuid;
 
 use crate::domain::entities::User;
-use crate::domain::repositories::{RepoError, UserRepository};
+use crate::domain::repositories::{ReengagementTarget, RepoError, UserRepository};
 use crate::domain::value_objects::{UserId, UserStatus};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::infra::db::schema::users;
@@ -26,6 +26,10 @@ struct UserRow {
     terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    check_in_streak: i32,
+    longest_streak: i32,
+    last_check_in_on: Option<NaiveDate>,
+    last_reminder_sent_on: Option<NaiveDate>,
 }
 
 impl UserRow {
@@ -41,6 +45,10 @@ impl UserRow {
             self.terms_accepted_at,
             self.created_at,
             self.updated_at,
+            self.check_in_streak,
+            self.longest_streak,
+            self.last_check_in_on,
+            self.last_reminder_sent_on,
         )
     }
 }
@@ -120,6 +128,10 @@ impl UserRepository for UserPostgres {
                 users::picture_url.eq(user.picture_url()),
                 users::status.eq(user.status().as_str()),
                 users::terms_accepted_at.eq(user.terms_accepted_at().copied()),
+                users::check_in_streak.eq(user.check_in_streak()),
+                users::longest_streak.eq(user.longest_streak()),
+                users::last_check_in_on.eq(user.last_check_in_on()),
+                users::last_reminder_sent_on.eq(user.last_reminder_sent_on()),
                 users::updated_at.eq(user.updated_at()),
             ))
             .execute(&mut conn)
@@ -147,6 +159,58 @@ impl UserRepository for UserPostgres {
             .execute(&mut conn)
             .await
             .map_err(|e| map_diesel_error("user.upsert", e))?;
+
+        Ok(())
+    }
+
+    async fn find_reengagement_targets(
+        &self,
+        today: NaiveDate,
+        window_days: i64,
+        batch_cap: i64,
+    ) -> Result<Vec<ReengagementTarget>, RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+        let window_start = today - chrono::Duration::days(window_days);
+
+        // NULL last_check_in_on is excluded by the `< today` comparison (NULL is not < today),
+        // which doubles as "engaged at least once". "Not reminded today" allows NULL or < today.
+        let rows: Vec<(Uuid, String)> = users::table
+            .filter(users::status.eq("active"))
+            .filter(users::last_check_in_on.lt(today))
+            .filter(users::last_check_in_on.ge(window_start))
+            .filter(
+                users::last_reminder_sent_on
+                    .lt(today)
+                    .or(users::last_reminder_sent_on.is_null().nullable()),
+            )
+            .order(users::last_check_in_on.desc())
+            .limit(batch_cap)
+            .select((users::id, users::line_user_id))
+            .load::<(Uuid, String)>(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("user.find_reengagement_targets", e))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|(id, line_user_id)| ReengagementTarget {
+                user_id: UserId::from_uuid(id),
+                line_user_id,
+            })
+            .collect())
+    }
+
+    async fn mark_reminded(&self, user_ids: &[UserId], today: NaiveDate) -> Result<(), RepoError> {
+        if user_ids.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+        let uuids: Vec<Uuid> = user_ids.iter().map(|id| *id.as_uuid()).collect();
+
+        diesel::update(users::table.filter(users::id.eq_any(uuids)))
+            .set(users::last_reminder_sent_on.eq(today))
+            .execute(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("user.mark_reminded", e))?;
 
         Ok(())
     }

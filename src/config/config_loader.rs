@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::{
-    AiConfig, BackgroundTasksConfig, BeamConfig, DatabaseConfig, DotEnvyConfig, LineConfig,
-    ServerConfig,
+    AiConfig, BackgroundTasksConfig, BeamConfig, DatabaseConfig, DevConfig, DotEnvyConfig,
+    InternalConfig, LineConfig, ServerConfig,
 };
 
 pub fn load() -> Result<DotEnvyConfig> {
@@ -99,6 +99,21 @@ pub fn load() -> Result<DotEnvyConfig> {
         .context("Invalid STALE_THRESHOLD_SECS")?,
     };
 
+    let dev = DevConfig {
+        auth_bypass_enabled: env_or("DEV_AUTH_BYPASS_ENABLED", "false")
+            .parse()
+            .context("Invalid DEV_AUTH_BYPASS_ENABLED")?,
+        test_line_user_id: env_or("DEV_AUTH_TEST_LINE_USER_ID", ""),
+        test_access_token: env_or("DEV_AUTH_TEST_TOKEN", "dev-token"),
+    };
+    if dev.auth_bypass_enabled && dev.test_line_user_id.is_empty() {
+        bail!("DEV_AUTH_BYPASS_ENABLED=true but DEV_AUTH_TEST_LINE_USER_ID is empty");
+    }
+
+    let internal = InternalConfig {
+        api_token: env_or("INTERNAL_API_TOKEN", ""),
+    };
+
     Ok(DotEnvyConfig {
         server,
         database,
@@ -106,6 +121,8 @@ pub fn load() -> Result<DotEnvyConfig> {
         ai,
         beam,
         background_tasks,
+        dev,
+        internal,
     })
 }
 

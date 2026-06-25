@@ -40,6 +40,16 @@ impl FromRequestParts<AppState> for LiffAuth {
             .strip_prefix("Bearer ")
             .ok_or_else(|| LiffAuthError("Invalid Authorization header format".into()))?;
 
+        if state.config.dev.auth_bypass_enabled && token == state.config.dev.test_access_token {
+            tracing::warn!(
+                line_user_id = %state.config.dev.test_line_user_id,
+                "LIFF auth bypassed via DEV_AUTH_BYPASS (must be off in production)"
+            );
+            return Ok(LiffAuth {
+                line_user_id: state.config.dev.test_line_user_id.clone(),
+            });
+        }
+
         let profile = state
             .line_client
             .verify_liff_token(token)
