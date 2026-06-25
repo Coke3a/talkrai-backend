@@ -18,4 +18,4 @@ pub use payment_order::PaymentOrder;
 pub use roleplay_session::RoleplaySession;
 pub use scene::Scene;
 pub use tag_definition::{TagCategory, TagDefinition};
-pub use user::User;
+pub use user::{CheckInStatus, User};

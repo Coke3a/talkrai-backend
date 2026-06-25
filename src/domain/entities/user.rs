@@ -3,6 +3,19 @@ use chrono::{DateTime, NaiveDate, Utc};
 use crate::domain::error::DomainError;
 use crate::domain::value_objects::{CheckInConfig, CheckInOutcome, UserId, UserStatus};
 
+/// Week length, mirrored locally because `check_in.rs`'s `WEEK_LEN` is private to that module.
+const WEEK_LEN_PROFILE: i32 = 7;
+
+/// Effective per-day check-in state for /profile (computed by `User::check_in_status`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckInStatus {
+    pub checked_in_today: bool,
+    pub current_streak: i32,  // 0 when the streak is broken as of `today`
+    pub today_cycle_day: i32, // 1..=7 — the cell for today's reward (claimed or claimable)
+    pub today_credits: i32,
+    pub days_to_chest: i32, // 7 - today_cycle_day (0 on chest day)
+}
+
 pub struct User {
     id: UserId,
     line_user_id: String,
@@ -167,7 +180,7 @@ impl User {
                 already_checked_in: true,
                 credits_awarded: 0,
                 new_streak: self.check_in_streak,
-                crossed_milestone: false,
+                is_weekly_chest: false,
             };
         }
 
@@ -187,16 +200,43 @@ impl User {
         self.updated_at = Utc::now();
 
         let credits_awarded = cfg.credits_for_streak(self.check_in_streak);
-        let crossed_milestone = cfg
-            .milestone_bonuses
-            .iter()
-            .any(|(day, _)| *day == self.check_in_streak);
+        let is_weekly_chest = CheckInConfig::is_weekly_chest(self.check_in_streak);
 
         CheckInOutcome {
             already_checked_in: false,
             credits_awarded,
             new_streak: self.check_in_streak,
-            crossed_milestone,
+            is_weekly_chest,
+        }
+    }
+
+    /// Effective check-in display state as of `today` — pure, no clock, no DB write. Used by
+    /// /profile, which may be opened before the user has chatted today (so the stored streak may not
+    /// yet "know" it is broken). Delegates all week-index math to the length-guarded `CheckInConfig`.
+    pub fn check_in_status(&self, today: NaiveDate, cfg: &CheckInConfig) -> CheckInStatus {
+        let checked_in_today = self.last_check_in_on == Some(today);
+        let alive_yesterday = self
+            .last_check_in_on
+            .and_then(|last| today.pred_opt().map(|y| last == y))
+            .unwrap_or(false);
+
+        // effective_streak = the streak that owns TODAY's cell (claimed or claimable);
+        // current_streak   = the run we show the user (0 once broken).
+        let (current_streak, effective_streak) = if checked_in_today {
+            (self.check_in_streak, self.check_in_streak)
+        } else if alive_yesterday {
+            (self.check_in_streak, self.check_in_streak + 1) // today is the next, still-claimable cell
+        } else {
+            (0, 1) // broken or never → today is a fresh day 1
+        };
+
+        let today_cycle_day = CheckInConfig::cycle_day(effective_streak);
+        CheckInStatus {
+            checked_in_today,
+            current_streak,
+            today_cycle_day,
+            today_credits: cfg.credits_for_streak(effective_streak),
+            days_to_chest: WEEK_LEN_PROFILE - today_cycle_day,
         }
     }
 }
@@ -208,11 +248,7 @@ mod tests {
 
     fn cfg() -> CheckInConfig {
         CheckInConfig {
-            base_credits: 4,
-            per_day_bonus: 1,
-            max_streak_for_bonus: 10,
-            milestone_bonuses: vec![(7, 20), (14, 30), (30, 60)],
-            daily_cap: 30,
+            weekly_credits: vec![2, 3, 4, 4, 4, 4, 10],
         }
     }
 
@@ -230,7 +266,7 @@ mod tests {
         let out = u.check_in(date(2026, 6, 24), &cfg());
         assert!(!out.already_checked_in);
         assert_eq!(out.new_streak, 1);
-        assert_eq!(out.credits_awarded, 4);
+        assert_eq!(out.credits_awarded, 2);
         assert_eq!(u.check_in_streak(), 1);
         assert_eq!(u.longest_streak(), 1);
         assert_eq!(u.last_check_in_on(), Some(date(2026, 6, 24)));
@@ -252,6 +288,7 @@ mod tests {
         u.check_in(date(2026, 6, 24), &cfg());
         let out = u.check_in(date(2026, 6, 25), &cfg());
         assert_eq!(out.new_streak, 2);
+        assert_eq!(out.credits_awarded, 3); // cycle-day 2
         assert_eq!(u.check_in_streak(), 2);
         assert_eq!(u.longest_streak(), 2);
     }
@@ -268,7 +305,7 @@ mod tests {
     }
 
     #[test]
-    fn seven_day_streak_crosses_milestone() {
+    fn seven_day_streak_hits_weekly_chest() {
         let mut u = user();
         let mut out = None;
         for day in 1..=7 {
@@ -276,7 +313,65 @@ mod tests {
         }
         let out = out.unwrap();
         assert_eq!(out.new_streak, 7);
-        assert!(out.crossed_milestone);
-        assert_eq!(out.credits_awarded, 30); // ramp 10 + milestone 20, capped at 30
+        assert!(out.is_weekly_chest);
+        assert_eq!(out.credits_awarded, 10); // weekly chest amount
+    }
+
+    #[test]
+    fn status_checked_in_today_shows_claimed_cell() {
+        let mut u = user();
+        // streak 3, last check-in is today
+        u.check_in(date(2026, 7, 1), &cfg());
+        u.check_in(date(2026, 7, 2), &cfg());
+        u.check_in(date(2026, 7, 3), &cfg());
+        let s = u.check_in_status(date(2026, 7, 3), &cfg());
+        assert!(s.checked_in_today);
+        assert_eq!(s.current_streak, 3); // stored streak
+        assert_eq!(s.today_cycle_day, 3);
+        assert_eq!(s.today_credits, 4);
+        assert_eq!(s.days_to_chest, 4);
+    }
+
+    #[test]
+    fn status_alive_yesterday_shows_next_claimable_cell() {
+        let mut u = user();
+        // last check-in was yesterday at streak 3; user has not chatted today yet
+        u.check_in(date(2026, 7, 1), &cfg());
+        u.check_in(date(2026, 7, 2), &cfg());
+        u.check_in(date(2026, 7, 3), &cfg());
+        let s = u.check_in_status(date(2026, 7, 4), &cfg());
+        assert!(!s.checked_in_today);
+        assert_eq!(s.current_streak, 3); // stored streak, not yet incremented
+        assert_eq!(s.today_cycle_day, 4); // (stored 3 + 1) → cycle-day 4
+        assert_eq!(s.today_credits, 4);
+        assert_eq!(s.days_to_chest, 3);
+    }
+
+    #[test]
+    fn status_gap_resets_to_day_one() {
+        let mut u = user();
+        // last check-in was several days ago → broken
+        u.check_in(date(2026, 7, 1), &cfg());
+        u.check_in(date(2026, 7, 2), &cfg()); // streak 2
+        let s = u.check_in_status(date(2026, 7, 10), &cfg());
+        assert!(!s.checked_in_today);
+        assert_eq!(s.current_streak, 0);
+        assert_eq!(s.today_cycle_day, 1);
+        assert_eq!(s.today_credits, 2);
+        assert_eq!(s.days_to_chest, 6);
+    }
+
+    #[test]
+    fn status_chest_boundary_checked_in_today() {
+        let mut u = user();
+        for day in 1..=7 {
+            u.check_in(date(2026, 7, day), &cfg());
+        }
+        let s = u.check_in_status(date(2026, 7, 7), &cfg());
+        assert!(s.checked_in_today);
+        assert_eq!(s.current_streak, 7);
+        assert_eq!(s.today_cycle_day, 7);
+        assert_eq!(s.today_credits, 10);
+        assert_eq!(s.days_to_chest, 0);
     }
 }

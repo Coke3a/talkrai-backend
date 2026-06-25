@@ -302,6 +302,10 @@ pub fn build_system_error_flex() -> serde_json::Value {
 }
 
 #[cfg(test)]
+// `build_session_ended_flex` / `build_registration_required_flex` below predate this test module;
+// a newer clippy (items_after_test_module) now flags their position. Suppressed narrowly here
+// rather than reordering an unrelated shipping file from a check-in feature branch.
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
 

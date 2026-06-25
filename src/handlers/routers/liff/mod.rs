@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::handlers::app::AppState;
 use crate::handlers::auth::LiffAuth;
 use crate::handlers::routers::error_response::{ApiError, ErrorResponse};
+use crate::infra::clock::bangkok_today;
 use crate::usecases::liff::create_payment::CreatePaymentInput;
 use crate::usecases::liff::end_session::EndSessionInput;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceInput;
@@ -193,9 +194,13 @@ pub(crate) struct ProfileResponse {
     pub created_at: DateTime<Utc>,
     pub total_sessions: i64,
     pub total_messages: i64,
-    pub check_in_streak: i32,
     pub longest_streak: i32,
-    pub next_milestone_in: Option<i32>,
+    pub current_streak: i32,
+    pub checked_in_today: bool,
+    pub today_cycle_day: i32,
+    pub today_credits: i32,
+    pub days_to_chest: i32,
+    pub weekly_credits: Vec<i32>,
 }
 
 #[utoipa::path(
@@ -214,6 +219,7 @@ pub(crate) async fn get_profile_handler(
 ) -> Result<impl IntoResponse, ApiError> {
     let input = GetProfileInput {
         line_user_id: liff.line_user_id,
+        today: bangkok_today(),
     };
 
     let output = state.get_profile_usecase.execute(input).await?;
@@ -224,9 +230,13 @@ pub(crate) async fn get_profile_handler(
             created_at: output.created_at,
             total_sessions: output.total_sessions,
             total_messages: output.total_messages,
-            check_in_streak: output.check_in_streak,
             longest_streak: output.longest_streak,
-            next_milestone_in: output.next_milestone_in,
+            current_streak: output.current_streak,
+            checked_in_today: output.checked_in_today,
+            today_cycle_day: output.today_cycle_day,
+            today_credits: output.today_credits,
+            days_to_chest: output.days_to_chest,
+            weekly_credits: output.weekly_credits,
         }),
     ))
 }

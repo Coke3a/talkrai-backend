@@ -608,15 +608,15 @@ impl ProcessRoleplayMessageUseCase {
             .ok_or_else(|| UsecaseError::NotFound("Credit balance not found".into()))?;
 
         let today = bangkok_today();
-        let check_in_outcome = self
+        let check_in_grant = self
             .check_in_usecase
             .run(&mut user, &mut credit_balance, today)
             .await?;
-        if let Some(outcome) = &check_in_outcome {
+        if let Some(grant) = &check_in_grant {
             tracing::info!(
                 user_id = %session.user_id().as_uuid(),
-                streak = outcome.new_streak,
-                credits_awarded = outcome.credits_awarded,
+                streak = grant.outcome.new_streak,
+                credits_awarded = grant.outcome.credits_awarded,
                 "Daily check-in applied"
             );
         }
@@ -834,17 +834,22 @@ impl ProcessRoleplayMessageUseCase {
 
             let mut line_messages: Vec<LineMessage> = Vec::new();
 
-            // Check-in greeting rides ahead of the first reply of the day (same push batch).
-            if let Some(outcome) = &check_in_outcome {
+            // Check-in calendar rides ahead of the first reply of the day (same push batch).
+            // Rendered as the SYSTEM (empty sender → TalkRai OA), not the character: the reward card
+            // is unambiguously "the system," while the character's reply is its own bubble below.
+            if let Some(grant) = &check_in_grant {
                 line_messages.push(LineMessage::Flex {
-                    alt_text: format!("ยินดีที่กลับมานะ 🌙 (ต่อเนื่องวันที่ {})", outcome.new_streak),
-                    contents: retention_flex::build_daily_checkin_flex(
-                        character.name().as_str(),
-                        outcome.new_streak,
-                        outcome.credits_awarded,
+                    alt_text: format!(
+                        "เช็คอินรายวัน รับเครดิตฟรี +{} · ต่อเนื่องวันที่ {}",
+                        grant.outcome.credits_awarded, grant.outcome.new_streak
                     ),
-                    sender_name: character.name().as_str().to_string(),
-                    sender_icon_url: character.avatar_url().unwrap_or_default().to_string(),
+                    contents: retention_flex::build_daily_checkin_flex(
+                        &grant.weekly_credits,
+                        grant.outcome.new_streak,
+                        grant.outcome.credits_awarded,
+                    ),
+                    sender_name: String::new(),
+                    sender_icon_url: String::new(),
                     quick_reply: None,
                 });
             }

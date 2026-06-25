@@ -7,10 +7,12 @@ use crate::domain::repositories::{AppConfigRepository, CreditRepository, UserRep
 use crate::domain::value_objects::{CheckInConfig, CheckInOutcome, CreditTransactionType};
 use crate::usecases::UsecaseError;
 
-const DEFAULT_BASE_CREDITS: i32 = 4;
-const DEFAULT_PER_DAY_BONUS: i32 = 1;
-const DEFAULT_MAX_STREAK_FOR_BONUS: i32 = 10;
-const DEFAULT_DAILY_CAP: i32 = 30;
+/// What a fresh check-in produces, plus the weekly table the Flex needs to render the calendar
+/// without a second config read (the usecase already loaded it).
+pub struct CheckInGrant {
+    pub outcome: CheckInOutcome,
+    pub weekly_credits: Vec<i32>,
+}
 
 /// Applies the daily check-in at the top of the roleplay pipeline, BEFORE the credit check
 /// (spec §C.4). Idempotent per day via `User::check_in`.
@@ -33,15 +35,16 @@ impl ApplyDailyCheckInUseCase {
         }
     }
 
-    /// Returns the outcome on the first message of the day (drives the greeting flex), or `None` if
-    /// already checked in. On a grant, both the DB and the passed-in `balance` are topped up so the
-    /// downstream credit check sees the new balance — this is the 0-credit deadlock fix.
+    /// Returns the grant on the first message of the day (drives the check-in calendar flex), or
+    /// `None` if already checked in. The grant carries the weekly table so the Flex renders the
+    /// calendar without a second config read. On a grant, both the DB and the passed-in `balance`
+    /// are topped up so the downstream credit check sees the new balance — the 0-credit deadlock fix.
     pub async fn run(
         &self,
         user: &mut User,
         balance: &mut CreditBalance,
         today: NaiveDate,
-    ) -> Result<Option<CheckInOutcome>, UsecaseError> {
+    ) -> Result<Option<CheckInGrant>, UsecaseError> {
         let cfg = self.load_config().await?;
         let outcome = user.check_in(today, &cfg);
         if outcome.already_checked_in {
@@ -65,33 +68,14 @@ impl ApplyDailyCheckInUseCase {
                 .await?;
         }
 
-        Ok(Some(outcome))
+        Ok(Some(CheckInGrant {
+            outcome,
+            weekly_credits: cfg.weekly_credits.clone(),
+        }))
     }
 
     async fn load_config(&self) -> Result<CheckInConfig, UsecaseError> {
-        let keys = &[
-            "daily_checkin_base_credits",
-            "daily_checkin_per_day_bonus",
-            "daily_checkin_max_streak_for_bonus",
-            "daily_checkin_milestone_bonuses",
-            "daily_checkin_daily_cap",
-        ];
-        let map = self.config_repo.get_many(keys).await?;
-        let get_i32 =
-            |key: &str, default: i32| map.get(key).and_then(|v| v.parse().ok()).unwrap_or(default);
-
-        Ok(CheckInConfig {
-            base_credits: get_i32("daily_checkin_base_credits", DEFAULT_BASE_CREDITS),
-            per_day_bonus: get_i32("daily_checkin_per_day_bonus", DEFAULT_PER_DAY_BONUS),
-            max_streak_for_bonus: get_i32(
-                "daily_checkin_max_streak_for_bonus",
-                DEFAULT_MAX_STREAK_FOR_BONUS,
-            ),
-            milestone_bonuses: map
-                .get("daily_checkin_milestone_bonuses")
-                .map(|s| CheckInConfig::parse_milestones(s))
-                .unwrap_or_default(),
-            daily_cap: get_i32("daily_checkin_daily_cap", DEFAULT_DAILY_CAP),
-        })
+        let raw = self.config_repo.get("daily_checkin_weekly_credits").await?;
+        Ok(CheckInConfig::from_config_value(raw.as_deref()))
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::domain::repositories::{
     AppConfigRepository, MessageRepository, RoleplaySessionRepository, UserRepository,
@@ -11,16 +11,20 @@ use crate::usecases::UsecaseError;
 
 pub struct GetProfileInput {
     pub line_user_id: String,
+    pub today: NaiveDate,
 }
 
 pub struct GetProfileOutput {
     pub created_at: DateTime<Utc>,
     pub total_sessions: i64,
     pub total_messages: i64,
-    pub check_in_streak: i32,
     pub longest_streak: i32,
-    /// Days until the next milestone bonus, or `None` if no milestone lies ahead.
-    pub next_milestone_in: Option<i32>,
+    pub current_streak: i32,
+    pub checked_in_today: bool,
+    pub today_cycle_day: i32,
+    pub today_credits: i32,
+    pub days_to_chest: i32,
+    pub weekly_credits: Vec<i32>,
 }
 
 pub struct GetProfileUseCase {
@@ -55,29 +59,23 @@ impl GetProfileUseCase {
             self.message_repo.count_by_user_id(&user_id),
         )?;
 
-        // Days to the next milestone bonus. Optional UI hint, so a missing/empty config simply
-        // yields `None` (no hint) rather than failing the profile load.
-        let streak = user.check_in_streak();
-        let milestones = self
-            .config_repo
-            .get("daily_checkin_milestone_bonuses")
-            .await?
-            .map(|raw| CheckInConfig::parse_milestones(&raw))
-            .unwrap_or_default();
-        let next_milestone_in = milestones
-            .iter()
-            .map(|(day, _)| *day)
-            .filter(|day| *day > streak)
-            .min()
-            .map(|day| day - streak);
+        // Weekly check-in display state as of `today`. A missing/malformed config row falls back to
+        // the default weekly table rather than failing the profile load.
+        let raw = self.config_repo.get("daily_checkin_weekly_credits").await?;
+        let cfg = CheckInConfig::from_config_value(raw.as_deref());
+        let status = user.check_in_status(input.today, &cfg);
 
         Ok(GetProfileOutput {
             created_at: *user.created_at(),
             total_sessions,
             total_messages,
-            check_in_streak: streak,
             longest_streak: user.longest_streak(),
-            next_milestone_in,
+            current_streak: status.current_streak,
+            checked_in_today: status.checked_in_today,
+            today_cycle_day: status.today_cycle_day,
+            today_credits: status.today_credits,
+            days_to_chest: status.days_to_chest,
+            weekly_credits: cfg.weekly_credits,
         })
     }
 }
