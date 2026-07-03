@@ -1,4 +1,4 @@
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -13,11 +13,14 @@ use crate::handlers::app::AppState;
 use crate::handlers::auth::LiffAuth;
 use crate::handlers::routers::error_response::{ApiError, ErrorResponse};
 use crate::infra::clock::bangkok_today;
+use crate::usecases::liff::accept_terms::AcceptTermsInput;
 use crate::usecases::liff::create_payment::CreatePaymentInput;
 use crate::usecases::liff::end_session::EndSessionInput;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceInput;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsInput;
 use crate::usecases::liff::get_current_session::GetCurrentSessionInput;
+use crate::usecases::liff::get_legal_doc::GetLegalDocInput;
+use crate::usecases::liff::get_me::GetMeInput;
 use crate::usecases::liff::get_payment_status::GetPaymentStatusInput;
 use crate::usecases::liff::get_profile::GetProfileInput;
 use crate::usecases::liff::get_scenes::{SceneCharacterItem, SceneItem};
@@ -29,6 +32,8 @@ pub fn router() -> Router<AppState> {
         .route("/sessions/start", post(start_session_handler))
         .route("/sessions/end", post(end_session_handler))
         .route("/sessions/current", get(get_current_session_handler))
+        .route("/me", get(get_me_handler))
+        .route("/terms/accept", post(accept_terms_handler))
         .route("/profile", get(get_profile_handler))
         .route("/credits/balance", get(get_credit_balance_handler))
         .route(
@@ -39,6 +44,7 @@ pub fn router() -> Router<AppState> {
         .route("/payments/status", get(get_payment_status_handler))
         .route("/tags", get(get_tags_handler))
         .route("/scenes", get(get_scenes_handler))
+        .route("/legal/{doc}", get(get_legal_doc_handler))
 }
 
 // ── Session Start/End ──────────────────────────────────────
@@ -185,6 +191,69 @@ pub(crate) async fn get_current_session_handler(
     });
 
     Ok((StatusCode::OK, Json(CurrentSessionResponse { session })))
+}
+
+// ── Current User (flags) & Terms ───────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct MeResponse {
+    pub terms_accepted: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/me",
+    responses(
+        (status = 200, description = "Current user flags", body = MeResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "User not found", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn get_me_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+) -> Result<impl IntoResponse, ApiError> {
+    let input = GetMeInput {
+        line_user_id: liff.line_user_id,
+    };
+
+    let output = state.get_me_usecase.execute(input).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(MeResponse {
+            terms_accepted: output.terms_accepted,
+        }),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/terms/accept",
+    responses(
+        (status = 200, description = "Terms accepted (idempotent)", body = MeResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "User not found", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn accept_terms_handler(
+    State(state): State<AppState>,
+    liff: LiffAuth,
+) -> Result<impl IntoResponse, ApiError> {
+    let input = AcceptTermsInput {
+        line_user_id: liff.line_user_id,
+    };
+
+    state.accept_terms_usecase.execute(input).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(MeResponse {
+            terms_accepted: true,
+        }),
+    ))
 }
 
 // ── Get Profile ────────────────────────────────────────────
@@ -497,6 +566,64 @@ pub(crate) async fn get_scenes_handler(
         .collect();
 
     Ok((StatusCode::OK, Json(ScenesResponse { scenes })))
+}
+
+// ── Get Legal Document ─────────────────────────────────────
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct LegalSectionResponse {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Serialize, ToSchema)]
+pub(crate) struct LegalDocResponse {
+    pub doc: String,
+    pub title: String,
+    pub version: i32,
+    pub updated: String,
+    pub sections: Vec<LegalSectionResponse>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/legal/{doc}",
+    params(("doc" = String, Path, description = "Legal document key: terms | privacy")),
+    responses(
+        (status = 200, description = "Legal document content", body = LegalDocResponse),
+        (status = 401, description = "Unauthorized", body = ErrorResponse),
+        (status = 404, description = "Unknown document", body = ErrorResponse)
+    ),
+    security(("bearer_auth" = []))
+)]
+pub(crate) async fn get_legal_doc_handler(
+    _liff: LiffAuth,
+    State(state): State<AppState>,
+    Path(doc): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let output = state
+        .get_legal_doc_usecase
+        .execute(GetLegalDocInput { doc })?;
+
+    let sections = output
+        .sections
+        .into_iter()
+        .map(|s| LegalSectionResponse {
+            title: s.title,
+            body: s.body,
+        })
+        .collect();
+
+    Ok((
+        StatusCode::OK,
+        Json(LegalDocResponse {
+            doc: output.doc,
+            title: output.title,
+            version: output.version,
+            updated: output.updated,
+            sections,
+        }),
+    ))
 }
 
 // ── Create Payment ────────────────────────────────────────

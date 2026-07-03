@@ -1,8 +1,11 @@
+pub mod accept_terms;
 pub mod create_payment;
 pub mod end_session;
 pub mod get_credit_balance;
 pub mod get_credit_transactions;
 pub mod get_current_session;
+pub mod get_legal_doc;
+pub mod get_me;
 pub mod get_payment_status;
 pub mod get_profile;
 pub mod get_scenes;

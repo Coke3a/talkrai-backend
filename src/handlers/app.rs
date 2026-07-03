@@ -34,11 +34,14 @@ use crate::handlers::openapi::ApiDoc;
 use crate::handlers::routers::{default, internal, liff, webhook};
 use crate::infra::db::postgres_connection::PgPool;
 use crate::usecases::background_jobs::{JobPollerUseCase, StaleJobCleanupUseCase};
+use crate::usecases::liff::accept_terms::AcceptTermsUseCase;
 use crate::usecases::liff::create_payment::CreatePaymentUseCase;
 use crate::usecases::liff::end_session::EndSessionUseCase;
 use crate::usecases::liff::get_credit_balance::GetCreditBalanceUseCase;
 use crate::usecases::liff::get_credit_transactions::GetCreditTransactionsUseCase;
 use crate::usecases::liff::get_current_session::GetCurrentSessionUseCase;
+use crate::usecases::liff::get_legal_doc::GetLegalDocUseCase;
+use crate::usecases::liff::get_me::GetMeUseCase;
 use crate::usecases::liff::get_payment_status::GetPaymentStatusUseCase;
 use crate::usecases::liff::get_profile::GetProfileUseCase;
 use crate::usecases::liff::get_scenes::GetScenesUseCase;
@@ -65,6 +68,9 @@ pub struct AppState {
     pub get_credit_balance_usecase: Arc<GetCreditBalanceUseCase>,
     pub get_credit_transactions_usecase: Arc<GetCreditTransactionsUseCase>,
     pub get_current_session_usecase: Arc<GetCurrentSessionUseCase>,
+    pub get_me_usecase: Arc<GetMeUseCase>,
+    pub accept_terms_usecase: Arc<AcceptTermsUseCase>,
+    pub get_legal_doc_usecase: Arc<GetLegalDocUseCase>,
     pub get_tags_usecase: Arc<GetTagsUseCase>,
     pub get_scenes_usecase: Arc<GetScenesUseCase>,
     pub create_payment_usecase: Arc<CreatePaymentUseCase>,
@@ -142,6 +148,12 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&config_repo),
     ));
 
+    let get_me_usecase = Arc::new(GetMeUseCase::new(Arc::clone(&repos.user_repo)));
+
+    let accept_terms_usecase = Arc::new(AcceptTermsUseCase::new(Arc::clone(&repos.user_repo)));
+
+    let get_legal_doc_usecase = Arc::new(GetLegalDocUseCase::new());
+
     let get_tags_usecase = Arc::new(GetTagsUseCase::new(Arc::clone(&repos.tag_def_repo)));
 
     let get_scenes_usecase = Arc::new(GetScenesUseCase::new(
@@ -185,6 +197,9 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         get_credit_balance_usecase,
         get_credit_transactions_usecase,
         get_current_session_usecase,
+        get_me_usecase,
+        accept_terms_usecase,
+        get_legal_doc_usecase,
         get_tags_usecase,
         get_scenes_usecase,
         create_payment_usecase,
