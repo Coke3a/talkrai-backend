@@ -27,6 +27,8 @@ use crate::usecases::liff::get_scenes::{SceneCharacterItem, SceneItem};
 use crate::usecases::liff::get_tags::TagItem;
 use crate::usecases::liff::start_session::StartSessionInput;
 
+mod events;
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/sessions/start", post(start_session_handler))
@@ -45,6 +47,7 @@ pub fn router() -> Router<AppState> {
         .route("/tags", get(get_tags_handler))
         .route("/scenes", get(get_scenes_handler))
         .route("/legal/{doc}", get(get_legal_doc_handler))
+        .route("/events", post(events::track_events_handler))
 }
 
 // ── Session Start/End ──────────────────────────────────────

@@ -1,6 +1,7 @@
 pub mod error_mapping;
 pub mod ttl_cache;
 
+pub mod analytics_event_postgres;
 pub mod app_config_postgres;
 pub mod cached_app_config;
 pub mod cached_character;
@@ -15,6 +16,7 @@ pub mod scene_postgres;
 pub mod tag_definition_postgres;
 pub mod user_postgres;
 
+pub use analytics_event_postgres::AnalyticsEventPostgres;
 pub use app_config_postgres::AppConfigPostgres;
 pub use cached_app_config::CachedAppConfigRepository;
 pub use cached_character::CachedCharacterRepository;

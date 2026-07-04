@@ -175,6 +175,19 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    analytics_events (id) {
+        id -> Int8,
+        user_id -> Uuid,
+        event_name -> Varchar,
+        page -> Nullable<Varchar>,
+        properties -> Nullable<Jsonb>,
+        client_event_id -> Uuid,
+        occurred_at -> Timestamptz,
+        received_at -> Timestamptz,
+    }
+}
+
 diesel::joinable!(scenes -> characters (character_id));
 diesel::joinable!(roleplay_sessions -> users (user_id));
 diesel::joinable!(roleplay_sessions -> characters (character_id));
@@ -184,6 +197,7 @@ diesel::joinable!(jobs -> users (user_id));
 diesel::joinable!(credit_balances -> users (user_id));
 diesel::joinable!(credit_transactions -> users (user_id));
 diesel::joinable!(payment_orders -> users (user_id));
+diesel::joinable!(analytics_events -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     app_config,
@@ -197,4 +211,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     credit_transactions,
     payment_orders,
     tag_definitions,
+    analytics_events,
 );

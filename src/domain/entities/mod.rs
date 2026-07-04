@@ -1,3 +1,4 @@
+pub mod analytics_event;
 pub mod character;
 pub mod credit_balance;
 pub mod credit_transaction;
@@ -9,6 +10,7 @@ pub mod scene;
 pub mod tag_definition;
 pub mod user;
 
+pub use analytics_event::AnalyticsEvent;
 pub use character::Character;
 pub use credit_balance::CreditBalance;
 pub use credit_transaction::CreditTransaction;

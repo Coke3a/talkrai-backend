@@ -1,3 +1,4 @@
+pub mod analytics_event_repository;
 pub mod app_config_repository;
 pub mod character_repository;
 pub mod credit_repository;
@@ -10,6 +11,7 @@ pub mod scene_repository;
 pub mod tag_definition_repository;
 pub mod user_repository;
 
+pub use analytics_event_repository::AnalyticsEventRepository;
 pub use app_config_repository::AppConfigRepository;
 pub use character_repository::CharacterRepository;
 pub use credit_repository::CreditRepository;

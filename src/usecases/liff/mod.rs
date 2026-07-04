@@ -12,3 +12,4 @@ pub mod get_scenes;
 pub mod get_tags;
 pub mod require_active_user;
 pub mod start_session;
+pub mod track_events;

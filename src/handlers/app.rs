@@ -19,9 +19,9 @@ use tracing_subscriber::EnvFilter;
 
 use crate::config::DotEnvyConfig;
 use crate::domain::repositories::{
-    AppConfigRepository, CharacterRepository, CreditRepository, JobRepository, MessageRepository,
-    PaymentOrderRepository, RoleplaySessionRepository, SceneRepository, TagDefinitionRepository,
-    UserRepository,
+    AnalyticsEventRepository, AppConfigRepository, CharacterRepository, CreditRepository,
+    JobRepository, MessageRepository, PaymentOrderRepository, RoleplaySessionRepository,
+    SceneRepository, TagDefinitionRepository, UserRepository,
 };
 use crate::domain::services::ai_client::AiClient;
 use crate::domain::services::line_client::LineClient;
@@ -47,6 +47,7 @@ use crate::usecases::liff::get_profile::GetProfileUseCase;
 use crate::usecases::liff::get_scenes::GetScenesUseCase;
 use crate::usecases::liff::get_tags::GetTagsUseCase;
 use crate::usecases::liff::start_session::StartSessionUseCase;
+use crate::usecases::liff::track_events::TrackEventsUseCase;
 use crate::usecases::reengagement::enqueue_reengagement_reminders::EnqueueReengagementRemindersUseCase;
 use crate::usecases::reengagement::send_reengagement_reminder::SendReengagementReminderUseCase;
 use crate::usecases::webhook::apply_daily_check_in::ApplyDailyCheckInUseCase;
@@ -77,6 +78,7 @@ pub struct AppState {
     pub get_payment_status_usecase: Arc<GetPaymentStatusUseCase>,
     pub process_beam_webhook_usecase: Arc<ProcessBeamWebhookUseCase>,
     pub enqueue_reengagement_usecase: Arc<EnqueueReengagementRemindersUseCase>,
+    pub track_events_usecase: Arc<TrackEventsUseCase>,
 }
 
 pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<()> {
@@ -184,6 +186,11 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         Arc::clone(&config_repo),
     ));
 
+    let track_events_usecase = Arc::new(TrackEventsUseCase::new(
+        Arc::clone(&repos.user_repo),
+        Arc::clone(&repos.analytics_event_repo),
+    ));
+
     let state = AppState {
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
@@ -206,6 +213,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         get_payment_status_usecase,
         process_beam_webhook_usecase,
         enqueue_reengagement_usecase,
+        track_events_usecase,
     };
 
     let app = build_router(state, &config);
@@ -417,6 +425,7 @@ struct Repositories {
     credit_repo: Arc<dyn CreditRepository>,
     payment_order_repo: Arc<dyn PaymentOrderRepository>,
     tag_def_repo: Arc<dyn TagDefinitionRepository>,
+    analytics_event_repo: Arc<dyn AnalyticsEventRepository>,
 }
 
 struct Infrastructure {
@@ -434,10 +443,10 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
     use crate::infra::ai::venice_client::VeniceClient;
     use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
-        AppConfigPostgres, CachedAppConfigRepository, CachedCharacterRepository,
-        CachedSceneRepository, CharacterPostgres, CreditPostgres, JobPostgres, MessagePostgres,
-        PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres, TagDefinitionPostgres,
-        UserPostgres,
+        AnalyticsEventPostgres, AppConfigPostgres, CachedAppConfigRepository,
+        CachedCharacterRepository, CachedSceneRepository, CharacterPostgres, CreditPostgres,
+        JobPostgres, MessagePostgres, PaymentOrderPostgres, RoleplaySessionPostgres, ScenePostgres,
+        TagDefinitionPostgres, UserPostgres,
     };
 
     // Character/scene form a rarely-changing catalog read on every roleplay turn;
@@ -460,6 +469,7 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         credit_repo: Arc::new(CreditPostgres::new(Arc::clone(db_pool))),
         payment_order_repo: Arc::new(PaymentOrderPostgres::new(Arc::clone(db_pool))),
         tag_def_repo: Arc::new(TagDefinitionPostgres::new(Arc::clone(db_pool))),
+        analytics_event_repo: Arc::new(AnalyticsEventPostgres::new(Arc::clone(db_pool))),
     };
 
     let line_client: Arc<dyn LineClient> = Arc::new(crate::infra::line::LineClientImpl::new(
