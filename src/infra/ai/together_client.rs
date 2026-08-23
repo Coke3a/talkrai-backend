@@ -14,8 +14,8 @@ use super::response::{
     UpdateSceneStateArgs,
 };
 
-const TOGETHER_API_URL: &str = "https://api.together.xyz/v1/chat/completions";
-const TOGETHER_MODEL: &str = "Qwen/Qwen3-235B-A22B-Instruct-2507-tput";
+const TOGETHER_API_URL: &str = "https://api.together.ai/v1/chat/completions";
+const TOGETHER_MODEL: &str = "Qwen/Qwen3.7-Plus";
 
 // --- Request types ---
 
@@ -24,10 +24,36 @@ struct TogetherRequest {
     model: &'static str,
     max_tokens: u32,
     messages: Vec<TogetherMessage>,
+    stream: bool,
+    reasoning: TogetherReasoning,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<Value>,
+}
+
+impl TogetherRequest {
+    fn new(
+        max_tokens: u32,
+        messages: Vec<TogetherMessage>,
+        tools: Option<Vec<Value>>,
+        tool_choice: Option<Value>,
+    ) -> Self {
+        Self {
+            model: TOGETHER_MODEL,
+            max_tokens,
+            messages,
+            stream: true,
+            reasoning: TogetherReasoning { enabled: false },
+            tools,
+            tool_choice,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct TogetherReasoning {
+    enabled: bool,
 }
 
 #[derive(Serialize)]
@@ -89,6 +115,117 @@ struct TogetherToolCallFunction {
     arguments: String,
 }
 
+#[derive(Deserialize)]
+struct TogetherStreamChunk {
+    #[serde(default)]
+    choices: Vec<TogetherStreamChoice>,
+    #[serde(default)]
+    usage: Option<TogetherUsage>,
+}
+
+#[derive(Deserialize)]
+struct TogetherStreamChoice {
+    delta: TogetherStreamDelta,
+}
+
+#[derive(Deserialize, Default)]
+struct TogetherStreamDelta {
+    content: Option<String>,
+    tool_calls: Option<Vec<TogetherStreamToolCall>>,
+}
+
+#[derive(Deserialize)]
+struct TogetherStreamToolCall {
+    #[serde(default)]
+    index: usize,
+    function: Option<TogetherStreamToolCallFunction>,
+}
+
+#[derive(Deserialize)]
+struct TogetherStreamToolCallFunction {
+    name: Option<String>,
+    arguments: Option<String>,
+}
+
+#[derive(Default)]
+struct AggregatedToolCall {
+    name: String,
+    arguments: String,
+}
+
+fn parse_together_stream(raw: &str) -> Result<TogetherResponse, AiClientError> {
+    let mut content = String::new();
+    let mut tool_calls: Vec<AggregatedToolCall> = Vec::new();
+    let mut usage = None;
+    let mut saw_chunk = false;
+
+    for line in raw.lines() {
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+
+        let chunk: TogetherStreamChunk = serde_json::from_str(data).map_err(|e| {
+            AiClientError::ParseError(format!("Failed to deserialize Together stream chunk: {e}"))
+        })?;
+        saw_chunk = true;
+
+        if chunk.usage.is_some() {
+            usage = chunk.usage;
+        }
+
+        for choice in chunk.choices {
+            if let Some(delta_content) = choice.delta.content {
+                content.push_str(&delta_content);
+            }
+            for tool_call in choice.delta.tool_calls.unwrap_or_default() {
+                if tool_calls.len() <= tool_call.index {
+                    tool_calls.resize_with(tool_call.index + 1, AggregatedToolCall::default);
+                }
+                if let Some(function) = tool_call.function {
+                    let aggregate = &mut tool_calls[tool_call.index];
+                    if let Some(name) = function.name {
+                        aggregate.name.push_str(&name);
+                    }
+                    if let Some(arguments) = function.arguments {
+                        aggregate.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+    }
+
+    if !saw_chunk {
+        return Err(AiClientError::ParseError(
+            "Together stream contained no data chunks".into(),
+        ));
+    }
+
+    let tool_calls = tool_calls
+        .into_iter()
+        .filter(|call| !call.name.is_empty() || !call.arguments.is_empty())
+        .map(|call| TogetherToolCall {
+            function: TogetherToolCallFunction {
+                name: call.name,
+                arguments: call.arguments,
+            },
+        })
+        .collect::<Vec<_>>();
+
+    Ok(TogetherResponse {
+        choices: vec![TogetherChoice {
+            message: TogetherChoiceMessage {
+                content: (!content.is_empty()).then_some(content),
+                tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
+            },
+        }],
+        usage,
+    })
+}
+
 pub struct TogetherClient {
     http: Client,
     api_key: String,
@@ -125,13 +262,12 @@ impl AiClient for TogetherClient {
             });
         }
 
-        let body = TogetherRequest {
-            model: TOGETHER_MODEL,
-            max_tokens: request.max_tokens,
+        let body = TogetherRequest::new(
+            request.max_tokens,
             messages,
-            tools: Some(vec![openai_tool_definition()]),
-            tool_choice: Some(serde_json::json!("required")),
-        };
+            Some(vec![openai_tool_definition()]),
+            Some(serde_json::json!("required")),
+        );
 
         tracing::debug!(
             provider = "together",
@@ -175,10 +311,7 @@ impl AiClient for TogetherClient {
             });
         }
 
-        let together_resp: TogetherResponse =
-            serde_json::from_str(&response_text).map_err(|e| {
-                AiClientError::ParseError(format!("Failed to deserialize Together response: {e}"))
-            })?;
+        let together_resp = parse_together_stream(&response_text)?;
 
         // METRIC: token usage. `cached_tokens` > 0 confirms prompt caching is active
         // for this model; consistently 0/absent means no cache benefit on Qwen, so
@@ -245,13 +378,7 @@ impl AiClient for TogetherClient {
             });
         }
 
-        let body = TogetherRequest {
-            model: TOGETHER_MODEL,
-            max_tokens: request.max_tokens,
-            messages,
-            tools: None,
-            tool_choice: None,
-        };
+        let body = TogetherRequest::new(request.max_tokens, messages, None, None);
 
         tracing::debug!(
             provider = "together",
@@ -295,12 +422,7 @@ impl AiClient for TogetherClient {
             });
         }
 
-        let together_resp: TogetherResponse =
-            serde_json::from_str(&response_text).map_err(|e| {
-                AiClientError::ParseError(format!(
-                    "Failed to deserialize Together summary response: {e}"
-                ))
-            })?;
+        let together_resp = parse_together_stream(&response_text)?;
 
         let text = together_resp
             .choices
@@ -311,5 +433,67 @@ impl AiClient for TogetherClient {
             })?;
 
         Ok(text.trim().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_stream_response_assembles_tool_call_arguments_and_usage() {
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"update_scene_state\",\"arguments\":\"{\\\"content\\\":\\\"*เธอยิ้ม* สวัสดี\\\",\"}}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"current_location\\\":\\\"ร้านกาแฟ\\\",\\\"scene_time\\\":\\\"เย็น\\\",\\\"mood\\\":\\\"happy\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":25,\"total_tokens\":125}}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let response = parse_together_stream(stream).unwrap();
+        let tool_call = &response.choices[0].message.tool_calls.as_ref().unwrap()[0];
+
+        assert_eq!(tool_call.function.name, "update_scene_state");
+        assert_eq!(
+            tool_call.function.arguments,
+            r#"{"content":"*เธอยิ้ม* สวัสดี","current_location":"ร้านกาแฟ","scene_time":"เย็น","mood":"happy"}"#
+        );
+        assert_eq!(response.usage.unwrap().total_tokens, Some(125));
+    }
+
+    #[test]
+    fn request_contract_uses_qwen37_streaming_without_reasoning() {
+        let request = TogetherRequest::new(600, vec![], None, None);
+        let json = serde_json::to_value(request).unwrap();
+
+        assert_eq!(
+            TOGETHER_API_URL,
+            "https://api.together.ai/v1/chat/completions"
+        );
+        assert_eq!(TOGETHER_MODEL, "Qwen/Qwen3.7-Plus");
+        assert_eq!(json["stream"], true);
+        assert_eq!(json["reasoning"]["enabled"], false);
+    }
+
+    #[test]
+    fn parse_stream_response_assembles_summary_content() {
+        let stream = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"สรุปเหตุการณ์\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ล่าสุดของเรื่อง\"},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+
+        let response = parse_together_stream(stream).unwrap();
+
+        assert_eq!(
+            response.choices[0].message.content.as_deref(),
+            Some("สรุปเหตุการณ์ล่าสุดของเรื่อง")
+        );
+    }
+
+    #[test]
+    fn parse_stream_response_rejects_malformed_chunk() {
+        let result = parse_together_stream("data: not-json\n\ndata: [DONE]\n");
+
+        assert!(matches!(result, Err(AiClientError::ParseError(_))));
     }
 }
