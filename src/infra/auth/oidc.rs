@@ -14,6 +14,19 @@ pub struct OidcProviders {
     pub line_secret: String,
     pub http: reqwest::Client,
 }
+fn provider_verifier<'a>(
+    provider: &str,
+    verifier: openidconnect::core::CoreIdTokenVerifier<'a>,
+) -> openidconnect::core::CoreIdTokenVerifier<'a> {
+    // LINE discovery advertises ES256 for native/LIFF tokens, but web login uses
+    // HS256 with the channel secret. Keep signature, issuer, audience and nonce checks.
+    // https://developers.line.biz/en/docs/line-login/verify-id-token/
+    if provider == "line" {
+        verifier.set_allowed_algs([openidconnect::core::CoreJwsSigningAlgorithm::HmacSha256])
+    } else {
+        verifier
+    }
+}
 impl OidcProviders {
     fn settings(&self, provider: &str) -> Result<(&str, &str, &str), WebError> {
         match provider {
@@ -137,7 +150,10 @@ impl IdentityProvider for OidcProviders {
             .extra_fields()
             .id_token()
             .ok_or(WebError::Rejected("INVALID_AUTH_FLOW"))?
-            .claims(&client.id_token_verifier(), &Nonce::new(nonce.to_owned()))
+            .claims(
+                &provider_verifier(provider, client.id_token_verifier()),
+                &Nonce::new(nonce.to_owned()),
+            )
             .map_err(|error| {
                 use openidconnect::ClaimsVerificationError as E;
                 let category = match error {
@@ -169,5 +185,65 @@ impl IdentityProvider for OidcProviders {
                 .unwrap_or("นักอ่าน")
                 .to_owned(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use hmac::{Hmac, Mac};
+    use openidconnect::core::{
+        CoreIdToken, CoreIdTokenVerifier, CoreJsonWebKeySet, CoreJwsSigningAlgorithm,
+    };
+    use sha2::Sha256;
+    use std::str::FromStr;
+
+    fn token(secret: &str, audience: &str, nonce: &str, expired: bool) -> CoreIdToken {
+        let now = chrono::Utc::now().timestamp();
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(serde_json::json!({"iss":"https://access.line.me","sub":"test-subject","aud":audience,"exp":if expired {now-60} else {now+600},"iat":now-120,"nonce":nonce,"name":"Test"}).to_string());
+        let input = format!("{header}.{payload}");
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(input.as_bytes());
+        CoreIdToken::from_str(&format!(
+            "{input}.{}",
+            URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
+        ))
+        .unwrap()
+    }
+
+    fn verifier() -> CoreIdTokenVerifier<'static> {
+        CoreIdTokenVerifier::new_confidential_client(
+            ClientId::new("test-channel".into()),
+            ClientSecret::new("test-secret".into()),
+            IssuerUrl::new("https://access.line.me".into()).unwrap(),
+            CoreJsonWebKeySet::new(vec![]),
+        )
+        .set_allowed_algs([CoreJwsSigningAlgorithm::EcdsaP256Sha256])
+    }
+
+    #[test]
+    fn line_web_token_is_accepted_without_weakening_claim_checks() {
+        let v = provider_verifier("line", verifier());
+        let nonce = Nonce::new("test-nonce".into());
+        assert!(token("test-secret", "test-channel", "test-nonce", false)
+            .claims(&v, &nonce)
+            .is_ok());
+        assert!(token("wrong-secret", "test-channel", "test-nonce", false)
+            .claims(&v, &nonce)
+            .is_err());
+        assert!(token("test-secret", "wrong-channel", "test-nonce", false)
+            .claims(&v, &nonce)
+            .is_err());
+        assert!(token("test-secret", "test-channel", "wrong-nonce", false)
+            .claims(&v, &nonce)
+            .is_err());
+        assert!(token("test-secret", "test-channel", "test-nonce", true)
+            .claims(&v, &nonce)
+            .is_err());
+        assert!(token("test-secret", "test-channel", "test-nonce", false)
+            .claims(&provider_verifier("google", verifier()), &nonce)
+            .is_err());
     }
 }
