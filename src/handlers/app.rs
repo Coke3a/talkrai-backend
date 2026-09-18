@@ -472,10 +472,11 @@ struct Infrastructure {
 
 fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infrastructure {
     use crate::infra::ai::claude_client::ClaudeClient;
+    use crate::infra::ai::llm_router::LlmRouter;
     use crate::infra::ai::openai_client::OpenAiClient;
+    use crate::infra::ai::openrouter_client::OpenRouterClient;
     use crate::infra::ai::together_client::TogetherClient;
     use crate::infra::ai::venice_client::VeniceClient;
-    use crate::infra::ai::LlmRouter;
     use crate::infra::db::repositories::{
         AnalyticsEventPostgres, AppConfigPostgres, CachedAppConfigRepository,
         CachedCharacterRepository, CachedSceneRepository, CharacterPostgres, CreditPostgres,
@@ -528,6 +529,10 @@ fn create_infrastructure(config: &DotEnvyConfig, db_pool: &Arc<PgPool>) -> Infra
         openai,
         venice,
         together,
+        Arc::new(OpenRouterClient::new(
+            config.ai.openrouter_api_key.clone(),
+            config.ai.openrouter_model.clone(),
+        )),
         Arc::clone(&config_repo),
         config.ai.default_provider.clone(),
     ));

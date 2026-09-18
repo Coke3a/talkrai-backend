@@ -17,6 +17,7 @@ pub struct LlmRouter {
     openai: Arc<dyn AiClient>,
     venice: Arc<dyn AiClient>,
     together: Arc<dyn AiClient>,
+    openrouter: Arc<dyn AiClient>,
     config_repo: Arc<dyn AppConfigRepository>,
     env_default: String,
 }
@@ -27,6 +28,7 @@ impl LlmRouter {
         openai: Arc<dyn AiClient>,
         venice: Arc<dyn AiClient>,
         together: Arc<dyn AiClient>,
+        openrouter: Arc<dyn AiClient>,
         config_repo: Arc<dyn AppConfigRepository>,
         env_default: String,
     ) -> Self {
@@ -35,6 +37,7 @@ impl LlmRouter {
             openai,
             venice,
             together,
+            openrouter,
             config_repo,
             env_default,
         }
@@ -69,6 +72,7 @@ impl LlmRouter {
             "openai" => &self.openai,
             "venice" => &self.venice,
             "together" => &self.together,
+            "openrouter" => &self.openrouter,
             unknown => {
                 tracing::warn!(
                     provider = unknown,

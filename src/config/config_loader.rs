@@ -53,6 +53,8 @@ pub fn load() -> Result<DotEnvyConfig> {
         venice_api_key: std::env::var("VENICE_API_KEY").context("VENICE_API_KEY is required")?,
         together_api_key: std::env::var("TOGETHER_API_KEY")
             .context("TOGETHER_API_KEY is required")?,
+        openrouter_api_key: env_or("OPENROUTER_API_KEY", ""),
+        openrouter_model: env_or("OPENROUTER_MODEL", "qwen/qwen3.8-27b"),
         default_provider: env_or("DEFAULT_LLM_PROVIDER", "claude"),
     };
 

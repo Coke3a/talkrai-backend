@@ -50,6 +50,8 @@ pub struct AiConfig {
     pub openai_api_key: String,
     pub venice_api_key: String,
     pub together_api_key: String,
+    pub openrouter_api_key: String,
+    pub openrouter_model: String,
     pub default_provider: String,
 }
 
