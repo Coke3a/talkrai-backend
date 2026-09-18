@@ -18,11 +18,12 @@ pub struct CheckInStatus {
 
 pub struct User {
     id: UserId,
-    line_user_id: String,
+    line_user_id: Option<String>,
     display_name: String,
     picture_url: Option<String>,
     language: String,
     status: UserStatus,
+    account_suspended: bool,
     terms_accepted_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
@@ -37,11 +38,12 @@ impl User {
         let now = Utc::now();
         Self {
             id: UserId::new(),
-            line_user_id,
+            line_user_id: Some(line_user_id),
             display_name,
             picture_url,
             language: "th".to_string(),
             status: UserStatus::Active,
+            account_suspended: false,
             terms_accepted_at: None,
             created_at: now,
             updated_at: now,
@@ -55,7 +57,7 @@ impl User {
     #[allow(clippy::too_many_arguments)]
     pub fn from_existing(
         id: UserId,
-        line_user_id: String,
+        line_user_id: impl Into<Option<String>>,
         display_name: String,
         picture_url: Option<String>,
         language: String,
@@ -70,11 +72,12 @@ impl User {
     ) -> Self {
         Self {
             id,
-            line_user_id,
+            line_user_id: line_user_id.into(),
             display_name,
             picture_url,
             language,
             status,
+            account_suspended: false,
             terms_accepted_at,
             created_at,
             updated_at,
@@ -89,8 +92,8 @@ impl User {
         &self.id
     }
 
-    pub fn line_user_id(&self) -> &str {
-        &self.line_user_id
+    pub fn line_user_id(&self) -> Option<&str> {
+        self.line_user_id.as_deref()
     }
 
     pub fn display_name(&self) -> &str {
@@ -114,7 +117,12 @@ impl User {
     }
 
     pub fn is_active(&self) -> bool {
-        self.status.is_active()
+        self.status.is_active() && !self.account_suspended
+    }
+
+    pub fn with_account_status(mut self, status: &str) -> Self {
+        self.account_suspended = status != "active";
+        self
     }
 
     pub fn has_accepted_terms(&self) -> bool {

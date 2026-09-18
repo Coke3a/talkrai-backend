@@ -265,13 +265,23 @@ impl LineClient for LineClientImpl {
         line_user_id: &str,
         messages: Vec<LineMessage>,
     ) -> Result<(), LineClientError> {
+        self.push_messages_with_retry_key(line_user_id, messages, Uuid::new_v4())
+            .await
+    }
+
+    async fn push_messages_with_retry_key(
+        &self,
+        line_user_id: &str,
+        messages: Vec<LineMessage>,
+        retry_key: Uuid,
+    ) -> Result<(), LineClientError> {
         let body = PushMessageRequest {
             to: line_user_id.to_string(),
             messages: messages.into_iter().map(build_message_json).collect(),
         };
 
         // Same retry key across all attempts for idempotency
-        let retry_key = Uuid::new_v4().to_string();
+        let retry_key = retry_key.to_string();
 
         let mut last_err: Option<LineClientError> = None;
         let max_attempts = 1 + RETRY_DELAYS_MS.len();
@@ -296,7 +306,12 @@ impl LineClient for LineClientImpl {
 
             let status = response.status().as_u16();
 
-            if response.status().is_success() {
+            if response.status().is_success()
+                || (status == 409
+                    && response
+                        .headers()
+                        .contains_key("x-line-accepted-request-id"))
+            {
                 return Ok(());
             }
 

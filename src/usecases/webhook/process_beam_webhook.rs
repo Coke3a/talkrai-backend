@@ -5,9 +5,8 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 
-use crate::domain::entities::CreditTransaction;
-use crate::domain::repositories::{CreditRepository, PaymentOrderRepository};
-use crate::domain::value_objects::{CreditTransactionType, PaymentOrderStatus};
+use crate::domain::repositories::PaymentOrderRepository;
+use crate::domain::value_objects::PaymentOrderStatus;
 use crate::usecases::UsecaseError;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -32,19 +31,16 @@ struct ChargeSucceededPayload {
 
 pub struct ProcessBeamWebhookUseCase {
     payment_order_repo: Arc<dyn PaymentOrderRepository>,
-    credit_repo: Arc<dyn CreditRepository>,
     hmac_key_base64: String,
 }
 
 impl ProcessBeamWebhookUseCase {
     pub fn new(
         payment_order_repo: Arc<dyn PaymentOrderRepository>,
-        credit_repo: Arc<dyn CreditRepository>,
         hmac_key_base64: String,
     ) -> Self {
         Self {
             payment_order_repo,
-            credit_repo,
             hmac_key_base64,
         }
     }
@@ -60,10 +56,10 @@ impl ProcessBeamWebhookUseCase {
             .map_err(|e| UsecaseError::Validation(format!("HMAC key error: {}", e)))?;
 
         mac.update(body);
-        let result = mac.finalize();
-        let computed = base64::engine::general_purpose::STANDARD.encode(result.into_bytes());
-
-        Ok(computed == signature)
+        let supplied = base64::engine::general_purpose::STANDARD
+            .decode(signature)
+            .map_err(|_| UsecaseError::Validation("Invalid webhook signature".into()))?;
+        Ok(mac.verify_slice(&supplied).is_ok())
     }
 
     pub async fn process_event(&self, event_type: &str, body: &[u8]) -> Result<(), UsecaseError> {
@@ -141,48 +137,9 @@ impl ProcessBeamWebhookUseCase {
             return Ok(());
         }
 
-        // 3. Update order status to completed
         self.payment_order_repo
-            .update_status(
-                order.id(),
-                &PaymentOrderStatus::Completed,
-                Some(&beam_status),
-            )
+            .settle_and_credit(order.id(), &beam_status)
             .await?;
-
-        // 4. Add credits to user balance
-        let credits = order.credits_amount();
-        let balance = self
-            .credit_repo
-            .find_balance_by_user_id(order.user_id())
-            .await?
-            .ok_or_else(|| UsecaseError::NotFound("Credit balance not found".into()))?;
-
-        let new_balance_after = balance.balance() + credits;
-
-        let transaction = CreditTransaction::new(
-            order.user_id().clone(),
-            CreditTransactionType::Purchase,
-            credits,
-            new_balance_after,
-            Some(*order.id_uuid()),
-            Some(format!(
-                "เติมเครดิต {} เครดิต ({})",
-                credits,
-                order.package_id()
-            )),
-        );
-
-        self.credit_repo
-            .add_and_log(order.user_id(), credits, &transaction)
-            .await?;
-
-        tracing::info!(
-            order_id = %order.id(),
-            user_id = %order.user_id(),
-            credits = credits,
-            "Credits added successfully"
-        );
 
         Ok(())
     }

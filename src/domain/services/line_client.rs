@@ -14,6 +14,16 @@ pub trait LineClient: Send + Sync {
         messages: Vec<LineMessage>,
     ) -> Result<(), LineClientError>;
 
+    /// Persist the retry key with the job so retries across workers are deduplicated.
+    async fn push_messages_with_retry_key(
+        &self,
+        line_user_id: &str,
+        messages: Vec<LineMessage>,
+        _retry_key: uuid::Uuid,
+    ) -> Result<(), LineClientError> {
+        self.push_messages(line_user_id, messages).await
+    }
+
     /// Get LINE user profile
     async fn get_profile(&self, line_user_id: &str) -> Result<LineProfile, LineClientError>;
 

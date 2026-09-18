@@ -4,7 +4,7 @@
 diesel::table! {
     users (id) {
         id -> Uuid,
-        line_user_id -> Varchar,
+        line_user_id -> Nullable<Varchar>,
         display_name -> Varchar,
         picture_url -> Nullable<Text>,
         language -> Varchar,
@@ -16,6 +16,7 @@ diesel::table! {
         longest_streak -> Int4,
         last_check_in_on -> Nullable<Date>,
         last_reminder_sent_on -> Nullable<Date>,
+        account_status -> Varchar,
     }
 }
 
@@ -65,6 +66,7 @@ diesel::table! {
 diesel::table! {
     roleplay_sessions (id) {
         id -> Uuid,
+        context_version -> Int8,
         user_id -> Uuid,
         character_id -> Uuid,
         scene_id -> Uuid,
@@ -96,7 +98,7 @@ diesel::table! {
         id -> Uuid,
         session_id -> Nullable<Uuid>,
         user_id -> Uuid,
-        line_user_id -> Varchar,
+        line_user_id -> Nullable<Varchar>,
         user_message -> Text,
         mode -> Varchar,
         status -> Varchar,

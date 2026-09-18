@@ -6,6 +6,12 @@ use crate::domain::value_objects::{PaymentOrderId, PaymentOrderStatus};
 
 #[async_trait]
 pub trait PaymentOrderRepository: Send + Sync {
+    async fn settle_and_credit(
+        &self,
+        id: &PaymentOrderId,
+        beam_status: &str,
+    ) -> Result<(), RepoError>;
+
     async fn create(&self, order: &PaymentOrder) -> Result<(), RepoError>;
 
     async fn find_by_id(&self, id: &PaymentOrderId) -> Result<Option<PaymentOrder>, RepoError>;

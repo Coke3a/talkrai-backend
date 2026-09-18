@@ -11,3 +11,5 @@ pub use beam_client::BeamClient;
 pub use beam_client_error::BeamClientError;
 pub use line_client::LineClient;
 pub use line_client_error::LineClientError;
+
+pub mod roleplay_text;

@@ -96,6 +96,21 @@ impl PaymentOrderPostgres {
 
 #[async_trait]
 impl PaymentOrderRepository for PaymentOrderPostgres {
+    async fn settle_and_credit(
+        &self,
+        id: &PaymentOrderId,
+        beam_status: &str,
+    ) -> Result<(), RepoError> {
+        let mut conn = self.pool.get().await.map_err(map_pool_error)?;
+        diesel::sql_query("SELECT settle_payment($1,$2)")
+            .bind::<diesel::sql_types::Uuid, _>(id.as_uuid())
+            .bind::<diesel::sql_types::Text, _>(beam_status)
+            .execute(&mut conn)
+            .await
+            .map_err(|e| map_diesel_error("payment.settle", e))?;
+        Ok(())
+    }
+
     async fn create(&self, order: &PaymentOrder) -> Result<(), RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 

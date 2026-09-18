@@ -22,7 +22,7 @@ struct JobRow {
     id: Uuid,
     session_id: Option<Uuid>,
     user_id: Uuid,
-    line_user_id: String,
+    line_user_id: Option<String>,
     user_message: String,
     mode: String,
     status: String,
@@ -43,7 +43,8 @@ impl JobRow {
             JobMode::from_str(&self.mode).expect("invalid job_mode in DB"),
             self.session_id.map(SessionId::from_uuid),
             UserId::from_uuid(self.user_id),
-            self.line_user_id,
+            self.line_user_id
+                .expect("legacy LINE job must have LINE identity"),
             self.user_message,
             JobStatus::from_str(&self.status).expect("invalid job_status in DB"),
             self.attempts,
@@ -148,6 +149,9 @@ impl JobRepository for JobPostgres {
 
         let result = jobs::table
             .find(id.as_uuid())
+            .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                "context_version IS NULL AND line_user_id IS NOT NULL",
+            ))
             .first::<JobRow>(&mut conn)
             .await
             .optional()
@@ -162,6 +166,9 @@ impl JobRepository for JobPostgres {
         let result = jobs::table
             .find(job_id.as_uuid())
             .filter(jobs::status.eq("pending"))
+            .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                "context_version IS NULL",
+            ))
             .for_update()
             .skip_locked()
             .first::<JobRow>(&mut conn)
@@ -181,7 +188,10 @@ impl JobRepository for JobPostgres {
         let rows_affected = diesel::update(
             jobs::table
                 .filter(jobs::id.eq(job.id().as_uuid()))
-                .filter(jobs::status.eq("pending")),
+                .filter(jobs::status.eq("pending"))
+                .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                    "context_version IS NULL",
+                )),
         )
         .set((
             jobs::status.eq(job.status().as_str()),
@@ -201,6 +211,9 @@ impl JobRepository for JobPostgres {
 
         let results = jobs::table
             .filter(jobs::status.eq("pending"))
+            .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                "context_version IS NULL",
+            ))
             .order(jobs::created_at.asc())
             .limit(limit)
             .for_update()
@@ -222,6 +235,9 @@ impl JobRepository for JobPostgres {
 
         let results = jobs::table
             .filter(jobs::status.eq("processing"))
+            .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(
+                "context_version IS NULL",
+            ))
             .filter(jobs::locked_at.lt(threshold))
             .load::<JobRow>(&mut conn)
             .await

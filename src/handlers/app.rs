@@ -57,6 +57,7 @@ use crate::usecases::webhook::receive_webhook::ReceiveWebhookUseCase;
 
 #[derive(Clone)]
 pub struct AppState {
+    pub web: Option<Arc<crate::handlers::routers::web::runtime::WebRuntime>>,
     pub db_pool: Arc<PgPool>,
     pub config: Arc<DotEnvyConfig>,
     pub job_sender: mpsc::Sender<JobId>,
@@ -96,17 +97,29 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
     let (job_sender, job_receiver) =
         mpsc::channel::<JobId>(config.background_tasks.job_channel_capacity);
 
-    let webhook_usecase = Arc::new(ReceiveWebhookUseCase::new(
-        Arc::clone(&line_client),
-        Arc::clone(&repos.user_repo),
-        Arc::clone(&repos.session_repo),
-        Arc::clone(&repos.job_repo),
-        Arc::clone(&repos.credit_repo),
-        Arc::clone(&config_repo),
-        job_sender.clone(),
-        config.line.liff_base_url.clone(),
-        config.line.rich_menu_0_id.clone(),
-    ));
+    let web = if std::env::var("WEB_ENABLED").as_deref() == Ok("true") {
+        Some(crate::handlers::routers::web::runtime::WebRuntime::new(
+            db_pool.clone(),
+            beam_client.clone(),
+        )?)
+    } else {
+        None
+    };
+
+    let webhook_usecase = Arc::new(
+        ReceiveWebhookUseCase::new(
+            Arc::clone(&line_client),
+            Arc::clone(&repos.user_repo),
+            Arc::clone(&repos.session_repo),
+            Arc::clone(&repos.job_repo),
+            Arc::clone(&repos.credit_repo),
+            Arc::clone(&config_repo),
+            job_sender.clone(),
+            config.line.liff_base_url.clone(),
+            config.line.rich_menu_0_id.clone(),
+        )
+        .with_shared_turns(web.as_ref().map(|runtime| runtime.stories.turns.clone())),
+    );
 
     let start_session_usecase = Arc::new(StartSessionUseCase::new(
         Arc::clone(&repos.user_repo),
@@ -176,7 +189,6 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
 
     let process_beam_webhook_usecase = Arc::new(ProcessBeamWebhookUseCase::new(
         Arc::clone(&repos.payment_order_repo),
-        Arc::clone(&repos.credit_repo),
         config.beam.hmac_key.clone(),
     ));
 
@@ -192,6 +204,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
     ));
 
     let state = AppState {
+        web: web.clone(),
         db_pool: Arc::clone(&db_pool),
         config: Arc::clone(&config),
         job_sender: job_sender.clone(),
@@ -219,7 +232,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
     let app = build_router(state, &config);
 
     let cancel = CancellationToken::new();
-    let handles = spawn_background_tasks(
+    let mut handles = spawn_background_tasks(
         &repos,
         &line_client,
         &ai_client,
@@ -229,6 +242,21 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
         job_receiver,
         cancel.clone(),
     );
+
+    if let Some(web) = web {
+        handles.push(crate::handlers::routers::web::runtime::spawn(
+            web,
+            repos.session_repo.clone(),
+            repos.character_repo.clone(),
+            repos.scene_repo.clone(),
+            repos.message_repo.clone(),
+            config_repo.clone(),
+            ai_client.clone(),
+            cancel.clone(),
+            db_pool.clone(),
+            line_client.clone(),
+        ));
+    }
 
     let addr = format!("{}:{}", config.server.host, config.server.port);
     tracing::info!("Listening on {}", addr);
@@ -283,7 +311,13 @@ fn build_router(state: AppState, config: &DotEnvyConfig) -> Router {
             Duration::from_secs(config.server.request_timeout_secs),
         ));
 
+    let web_router = state
+        .web
+        .clone()
+        .map(|web| crate::handlers::routers::web::routes::router().with_state::<AppState>(web))
+        .unwrap_or_default();
     let router = Router::new()
+        .merge(web_router)
         .route(
             "/webhook/line-message",
             post(webhook::line_message::webhook_handler),

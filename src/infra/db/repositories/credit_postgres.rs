@@ -159,13 +159,18 @@ impl CreditRepository for CreditPostgres {
     async fn create_balance(&self, balance: &CreditBalance) -> Result<(), RepoError> {
         let mut conn = self.pool.get().await.map_err(map_pool_error)?;
 
-        let new_row = NewCreditBalanceRow::from_entity(balance);
-
-        diesel::insert_into(credit_balances::table)
-            .values(&new_row)
-            .execute(&mut conn)
-            .await
-            .map_err(|e| map_diesel_error("credit.create_balance", e))?;
+        conn.transaction::<_, diesel::result::Error, _>(|conn| {
+            async move {
+                diesel::insert_into(credit_balances::table)
+                    .values(NewCreditBalanceRow::from_entity(balance))
+                    .on_conflict(credit_balances::user_id).do_nothing()
+                    .execute(conn).await?;
+                diesel::sql_query("INSERT INTO credit_grants(user_id,grant_kind,period_key,amount) VALUES($1,'welcome','once',0) ON CONFLICT DO NOTHING")
+                    .bind::<diesel::sql_types::Uuid,_>(balance.user_id().as_uuid())
+                    .execute(conn).await?;
+                Ok(())
+            }.scope_boxed()
+        }).await.map_err(|e|map_diesel_error("credit.create_balance",e))?;
 
         Ok(())
     }

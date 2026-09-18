@@ -56,3 +56,7 @@ unicode-segmentation = "1"
 # API Documentation
 utoipa = { version = "5", features = ["axum_extras", "uuid", "chrono"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+openidconnect = { version = "4", features = ["reqwest", "rustls-tls"] }
+
+[dev-dependencies]
+jsonschema = { version = "0.56.0", default-features = false }

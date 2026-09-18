@@ -21,7 +21,7 @@ pub(crate) struct ReadyResponse {
     )
 )]
 pub async fn ready_check_handler(State(state): State<AppState>) -> impl IntoResponse {
-    match state.db_pool.get().await {
+    match crate::infra::db::schema_check::ensure_ready(&state.db_pool).await {
         Ok(_) => (
             StatusCode::OK,
             Json(ReadyResponse {

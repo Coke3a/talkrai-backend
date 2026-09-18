@@ -4,7 +4,7 @@ use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::domain::services::ai_client::{AiRoleplayResponse, BlockType, ResponseBlock};
+use crate::domain::services::ai_client::{AiRoleplayResponse, BlockType};
 use crate::domain::services::AiClientError;
 
 #[derive(Deserialize)]
@@ -209,63 +209,7 @@ fn extract_mood_tag(text: &str) -> (String, Option<String>) {
 /// `*...*` = narration, everything else = dialogue.
 /// `*` inside `"..."` is regular text; `"` inside `*...*` is regular text.
 /// Never returns empty vec for non-empty input.
-pub fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
-    let mut blocks: Vec<ResponseBlock> = Vec::new();
-    let mut buffer = String::new();
-    let mut in_narration = false;
-    let mut in_quote = false;
-
-    for ch in text.chars() {
-        match ch {
-            '*' if !in_quote => {
-                // Flush buffer as current type
-                let trimmed = buffer.trim().to_string();
-                if !trimmed.is_empty() {
-                    blocks.push(ResponseBlock {
-                        block_type: if in_narration {
-                            BlockType::Narration
-                        } else {
-                            BlockType::Dialogue
-                        },
-                        text: trimmed,
-                    });
-                }
-                buffer.clear();
-                in_narration = !in_narration;
-            }
-            '"' if !in_narration => {
-                in_quote = !in_quote;
-                buffer.push(ch);
-            }
-            _ => {
-                buffer.push(ch);
-            }
-        }
-    }
-
-    // Flush remaining buffer
-    let trimmed = buffer.trim().to_string();
-    if !trimmed.is_empty() {
-        blocks.push(ResponseBlock {
-            block_type: if in_narration {
-                BlockType::Narration
-            } else {
-                BlockType::Dialogue
-            },
-            text: trimmed,
-        });
-    }
-
-    // Never return empty for non-empty input
-    if blocks.is_empty() {
-        blocks.push(ResponseBlock {
-            block_type: BlockType::Dialogue,
-            text: text.trim().to_string(),
-        });
-    }
-
-    blocks
-}
+pub use crate::domain::services::roleplay_text::parse_text_into_blocks;
 
 /// Validate that an AI roleplay response contains meaningful content.
 ///
@@ -273,35 +217,12 @@ pub fn parse_text_into_blocks(text: &str) -> Vec<ResponseBlock> {
 /// 1. Content must not be empty.
 /// 2. Must contain at least 10 Thai or English alphabetic characters.
 /// 3. Alphabetic characters must be at least 30% of total characters.
-pub fn validate_ai_response(response: &AiRoleplayResponse) -> Result<(), String> {
-    let content = response.content_text();
-    let trimmed = content.trim();
-
-    if trimmed.is_empty() {
-        return Err("Empty response".into());
-    }
-
-    let alpha_count = trimmed
-        .chars()
-        .filter(|c| c.is_ascii_alphabetic() || ('\u{0E01}'..='\u{0E4F}').contains(c))
-        .count();
-
-    if alpha_count < 10 {
-        return Err(format!("Too few alphabetic characters: {alpha_count}"));
-    }
-
-    let total = trimmed.chars().count();
-    let ratio = alpha_count as f64 / total as f64;
-    if ratio < 0.3 {
-        return Err(format!("Low alphabetic ratio: {:.1}%", ratio * 100.0));
-    }
-
-    Ok(())
-}
+pub use crate::domain::services::ai_client::validate_ai_response;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::services::ai_client::ResponseBlock;
 
     #[test]
     fn parse_basic() {

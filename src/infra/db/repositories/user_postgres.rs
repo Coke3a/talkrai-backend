@@ -18,7 +18,7 @@ use super::error_mapping::{map_diesel_error, map_pool_error};
 #[diesel(table_name = users)]
 struct UserRow {
     id: Uuid,
-    line_user_id: String,
+    line_user_id: Option<String>,
     display_name: String,
     picture_url: Option<String>,
     language: String,
@@ -30,6 +30,7 @@ struct UserRow {
     longest_streak: i32,
     last_check_in_on: Option<NaiveDate>,
     last_reminder_sent_on: Option<NaiveDate>,
+    account_status: String,
 }
 
 impl UserRow {
@@ -50,6 +51,7 @@ impl UserRow {
             self.last_check_in_on,
             self.last_reminder_sent_on,
         )
+        .with_account_status(&self.account_status)
     }
 }
 
@@ -57,7 +59,7 @@ impl UserRow {
 #[diesel(table_name = users)]
 struct NewUserRow<'a> {
     id: &'a Uuid,
-    line_user_id: &'a str,
+    line_user_id: Option<&'a str>,
     display_name: &'a str,
     picture_url: Option<&'a str>,
     language: &'a str,
@@ -174,8 +176,9 @@ impl UserRepository for UserPostgres {
 
         // NULL last_check_in_on is excluded by the `< today` comparison (NULL is not < today),
         // which doubles as "engaged at least once". "Not reminded today" allows NULL or < today.
-        let rows: Vec<(Uuid, String)> = users::table
+        let rows: Vec<(Uuid, Option<String>)> = users::table
             .filter(users::status.eq("active"))
+            .filter(users::account_status.eq("active"))
             .filter(users::last_check_in_on.lt(today))
             .filter(users::last_check_in_on.ge(window_start))
             .filter(
@@ -186,15 +189,17 @@ impl UserRepository for UserPostgres {
             .order(users::last_check_in_on.desc())
             .limit(batch_cap)
             .select((users::id, users::line_user_id))
-            .load::<(Uuid, String)>(&mut conn)
+            .load::<(Uuid, Option<String>)>(&mut conn)
             .await
             .map_err(|e| map_diesel_error("user.find_reengagement_targets", e))?;
 
         Ok(rows
             .into_iter()
-            .map(|(id, line_user_id)| ReengagementTarget {
-                user_id: UserId::from_uuid(id),
-                line_user_id,
+            .filter_map(|(id, line_user_id)| {
+                Some(ReengagementTarget {
+                    user_id: UserId::from_uuid(id),
+                    line_user_id: line_user_id?,
+                })
             })
             .collect())
     }

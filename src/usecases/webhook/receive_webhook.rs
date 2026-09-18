@@ -62,6 +62,7 @@ struct LineEventPostback {
 }
 
 pub struct ReceiveWebhookUseCase {
+    shared_turns: Option<Arc<dyn crate::domain::web::TurnRepository>>,
     line_client: Arc<dyn LineClient>,
     user_repo: Arc<dyn UserRepository>,
     session_repo: Arc<dyn RoleplaySessionRepository>,
@@ -87,6 +88,7 @@ impl ReceiveWebhookUseCase {
         rich_menu_0_id: String,
     ) -> Self {
         Self {
+            shared_turns: None,
             line_client,
             user_repo,
             session_repo,
@@ -97,6 +99,14 @@ impl ReceiveWebhookUseCase {
             liff_base_url,
             rich_menu_0_id,
         }
+    }
+
+    pub fn with_shared_turns(
+        mut self,
+        turns: Option<Arc<dyn crate::domain::web::TurnRepository>>,
+    ) -> Self {
+        self.shared_turns = turns;
+        self
     }
 
     async fn resolve_welcome_credits(&self) -> Result<i32, UsecaseError> {
@@ -226,6 +236,48 @@ impl ReceiveWebhookUseCase {
                     }
                 };
 
+                if let Some(turns) = &self.shared_turns {
+                    let event_id = message.id.as_deref().ok_or_else(|| {
+                        UsecaseError::Validation("Missing LINE message ID".into())
+                    })?;
+                    match turns
+                        .admit(
+                            *user.id().as_uuid(),
+                            *session.id().as_uuid(),
+                            "line",
+                            "turn",
+                            &format!("line:{event_id}"),
+                            serde_json::json!({"content":text,"reply_token":reply_token}),
+                        )
+                        .await
+                    {
+                        Ok(_) => return Ok(None),
+                        Err(error) => {
+                            let message = match error {
+                                crate::domain::web::WebError::Rejected("INSUFFICIENT_CREDITS") => {
+                                    "เครดิตไม่พอ กรุณาเติมเครดิตแล้วลองอีกครั้ง"
+                                }
+                                crate::domain::web::WebError::Rejected("TURN_IN_PROGRESS") => {
+                                    "กำลังตอบข้อความก่อนหน้าอยู่ รอสักครู่นะ"
+                                }
+                                _ => "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง",
+                            };
+                            let _ = self
+                                .line_client
+                                .reply_messages(
+                                    reply_token,
+                                    vec![LineMessage::Text {
+                                        text: message.into(),
+                                        sender_name: String::new(),
+                                        sender_icon_url: String::new(),
+                                    }],
+                                )
+                                .await;
+                            return Ok(None);
+                        }
+                    }
+                }
+
                 // Fire loading animation only when session exists and we'll process the message
                 let lc = Arc::clone(&self.line_client);
                 let uid = line_user_id.to_string();
@@ -241,27 +293,6 @@ impl ReceiveWebhookUseCase {
                     .has_active_job_for_session(session.id())
                     .await?
                 {
-                    let mut job = Job::new(
-                        JobMode::RoleplayMessage,
-                        Some(session.id().clone()),
-                        user.id().clone(),
-                        line_user_id.to_string(),
-                        text,
-                    );
-                    let job_id = job.id().clone();
-                    self.job_repo.create(&job).await?;
-                    job.reject(
-                        "Session already has an active job being processed. \
-                         Message was received while a previous response was still generating."
-                            .to_string(),
-                    )?;
-                    self.job_repo.update(&job).await?;
-
-                    tracing::info!(
-                        job_id = %job_id.as_uuid(),
-                        session_id = %session.id().as_uuid(),
-                        "Rejected duplicate message — session already has an active job"
-                    );
                     return Ok(None);
                 }
 
@@ -402,21 +433,16 @@ impl ReceiveWebhookUseCase {
             }
         };
 
-        // End active session if any
-        if let Some(mut session) = self.session_repo.find_active_by_user_id(user.id()).await? {
-            session.end()?;
-            self.session_repo.update(&session).await?;
-            tracing::info!(
-                user_id = %user.id().as_uuid(),
-                session_id = %session.id().as_uuid(),
-                "Ended active session due to unfollow"
-            );
-        }
-
-        // Deactivate user
+        // Friendship changes must persist even when a shared turn holds the story lease.
         let mut user = user;
         user.deactivate();
         self.user_repo.update(&user).await?;
+        if self.shared_turns.is_none() {
+            if let Some(mut session) = self.session_repo.find_active_by_user_id(user.id()).await? {
+                session.end()?;
+                self.session_repo.update(&session).await?;
+            }
+        }
 
         tracing::info!(
             user_id = %user.id().as_uuid(),
@@ -519,6 +545,11 @@ impl ReceiveWebhookUseCase {
             profile.picture_url,
         );
         self.user_repo.upsert(&user).await?;
+        let user = self
+            .user_repo
+            .find_by_line_user_id(line_user_id)
+            .await?
+            .ok_or_else(|| UsecaseError::NotFound("User not found after upsert".into()))?;
 
         let welcome_credits = self.resolve_welcome_credits().await?;
         let balance = CreditBalance::new(user.id().clone(), welcome_credits);

@@ -127,7 +127,9 @@ impl MessageRepository for MessagePostgres {
 
         let mut results = messages::table
             .filter(messages::session_id.eq(session_id.as_uuid()))
-            .order(messages::created_at.desc())
+            .order(diesel::dsl::sql::<diesel::sql_types::BigInt>(
+                "sequence DESC",
+            ))
             .limit(limit)
             .load::<MessageRow>(&mut conn)
             .await

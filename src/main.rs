@@ -22,6 +22,7 @@ async fn run() -> Result<()> {
         config.database.max_connections as usize,
     )?;
 
+    talkrai_backend::infra::db::schema_check::ensure_ready(&pool).await?;
     handlers::app::start(Arc::new(config), Arc::new(pool)).await?;
 
     Ok(())

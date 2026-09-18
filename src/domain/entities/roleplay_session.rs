@@ -15,6 +15,7 @@ pub struct RoleplaySession {
     mood: CharacterMood,
     relationship_level: RelationshipLevel,
     message_count: i32,
+    context_version: i64,
     current_location: Option<String>,
     scene_time: Option<String>,
     scene_summary: Option<String>,
@@ -40,6 +41,7 @@ impl RoleplaySession {
             mood: start_mood,
             relationship_level: start_relationship_level,
             message_count: 0,
+            context_version: 0,
             current_location: None,
             scene_time: None,
             scene_summary: None,
@@ -73,12 +75,25 @@ impl RoleplaySession {
             mood,
             relationship_level,
             message_count,
+            context_version: 0,
             current_location,
             scene_time,
             scene_summary,
             created_at,
             updated_at,
         }
+    }
+
+    pub fn with_context_version(mut self, version: i64) -> Self {
+        self.context_version = version;
+        self
+    }
+    pub fn context_version(&self) -> i64 {
+        self.context_version
+    }
+    pub fn restore_relationship_context(&mut self, level: RelationshipLevel, count: i32) {
+        self.relationship_level = level;
+        self.message_count = count;
     }
 
     pub fn id(&self) -> &SessionId {

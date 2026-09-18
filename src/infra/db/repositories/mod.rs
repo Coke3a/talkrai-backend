@@ -30,3 +30,11 @@ pub use roleplay_session_postgres::RoleplaySessionPostgres;
 pub use scene_postgres::ScenePostgres;
 pub use tag_definition_postgres::TagDefinitionPostgres;
 pub use user_postgres::UserPostgres;
+
+pub mod web_auth_postgres;
+
+pub mod web_data_postgres;
+
+pub mod turn_postgres;
+
+pub mod web_payment_postgres;
