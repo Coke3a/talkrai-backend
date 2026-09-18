@@ -15,7 +15,7 @@ use super::response::{
 };
 
 const TOGETHER_API_URL: &str = "https://api.together.ai/v1/chat/completions";
-const TOGETHER_MODEL: &str = "Qwen/Qwen3.7-Plus";
+const TOGETHER_MODEL: &str = "Qwen/Qwen3.5-9B";
 
 // --- Request types ---
 
@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn request_contract_uses_qwen37_streaming_without_reasoning() {
+    fn request_contract_uses_qwen35_9b_streaming_without_reasoning() {
         let request = TogetherRequest::new(600, vec![], None, None);
         let json = serde_json::to_value(request).unwrap();
 
@@ -469,7 +469,7 @@ mod tests {
             TOGETHER_API_URL,
             "https://api.together.ai/v1/chat/completions"
         );
-        assert_eq!(TOGETHER_MODEL, "Qwen/Qwen3.7-Plus");
+        assert_eq!(TOGETHER_MODEL, "Qwen/Qwen3.5-9B");
         assert_eq!(json["stream"], true);
         assert_eq!(json["reasoning"]["enabled"], false);
     }
