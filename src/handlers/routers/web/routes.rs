@@ -257,6 +257,7 @@ async fn auth_callback(
     let (token, path) = match outcome {
         Ok(result) => result,
         Err(error) => {
+            tracing::warn!(provider, error=%error, has_code=query.code.is_some(), has_state=query.state.is_some(), has_flow_cookie=cookie(&headers,"__Host-talkrai-flow").is_some(), "Web login callback rejected");
             let code = match error {
                 WebError::Rejected("IDENTITY_ALREADY_LINKED") => "identity_conflict",
                 WebError::Rejected("ADMISSIONS_DISABLED") => "admissions_disabled",

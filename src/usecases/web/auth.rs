@@ -71,7 +71,8 @@ impl WebAuth {
         let flow = self
             .repo
             .consume_flow(&hash_token(state), &hash_token(browser), provider)
-            .await?;
+            .await
+            .inspect_err(|_| tracing::warn!(provider, stage = "flow_lookup", "Web login failed"))?;
         if let Some(required) = &flow.link_session_hash {
             if current_session.map(hash_token).as_ref() != Some(required) {
                 return Err(WebError::Rejected("INVALID_AUTH_FLOW"));
@@ -80,7 +81,14 @@ impl WebAuth {
         let identity = self
             .provider
             .verify(provider, code, &flow.nonce, &flow.pkce_verifier)
-            .await?;
+            .await
+            .inspect_err(|_| {
+                tracing::warn!(
+                    provider,
+                    stage = "provider_verification",
+                    "Web login failed"
+                )
+            })?;
         let token = random_token();
         let csrf = random_token();
         self.repo
@@ -91,7 +99,7 @@ impl WebAuth {
                 &csrf,
                 allow_registration,
             )
-            .await?;
+            .await.inspect_err(|error| tracing::warn!(provider, stage="account_resolution", error=%error, "Web login failed"))?;
         Ok((token, flow.return_to))
     }
 }

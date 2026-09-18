@@ -111,13 +111,53 @@ impl IdentityProvider for OidcProviders {
             .set_pkce_verifier(PkceCodeVerifier::new(verifier.to_owned()))
             .request_async(&self.http)
             .await
-            .map_err(|_| WebError::Rejected("INVALID_AUTH_FLOW"))?;
+            .map_err(|error| {
+                let category = match &error {
+                    openidconnect::RequestTokenError::ServerResponse(response) => {
+                        match response.error().as_ref() {
+                            "invalid_client" => "invalid_client",
+                            "invalid_grant" => "invalid_grant",
+                            "unauthorized_client" => "unauthorized_client",
+                            _ => "provider_rejected",
+                        }
+                    }
+                    openidconnect::RequestTokenError::Request(_) => "network",
+                    openidconnect::RequestTokenError::Parse(_, _) => "response_parse",
+                    _ => "other",
+                };
+                tracing::warn!(
+                    provider,
+                    stage = "token_exchange",
+                    category,
+                    "OIDC verification failed"
+                );
+                WebError::Rejected("INVALID_AUTH_FLOW")
+            })?;
         let claims = tokens
             .extra_fields()
             .id_token()
             .ok_or(WebError::Rejected("INVALID_AUTH_FLOW"))?
             .claims(&client.id_token_verifier(), &Nonce::new(nonce.to_owned()))
-            .map_err(|_| WebError::Rejected("INVALID_AUTH_FLOW"))?;
+            .map_err(|error| {
+                use openidconnect::ClaimsVerificationError as E;
+                let category = match error {
+                    E::Expired(_) => "expired",
+                    E::InvalidAudience(_) => "audience",
+                    E::InvalidIssuer(_) => "issuer",
+                    E::InvalidNonce(_) => "nonce",
+                    E::SignatureVerification(_) => "signature",
+                    E::InvalidSubject(_) => "subject",
+                    E::Unsupported(_) => "unsupported",
+                    _ => "other",
+                };
+                tracing::warn!(
+                    provider,
+                    stage = "id_token_claims",
+                    category,
+                    "OIDC verification failed"
+                );
+                WebError::Rejected("INVALID_AUTH_FLOW")
+            })?;
         Ok(Identity {
             provider: provider.to_owned(),
             issuer: issuer.to_owned(),
