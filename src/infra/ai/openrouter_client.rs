@@ -43,8 +43,13 @@ impl OpenRouterClient {
                 .into_iter()
                 .map(|m| json!({"role":m.role,"content":m.content})),
         );
-        let mut body =
-            json!({"model":self.model,"messages":all,"max_tokens":max_tokens,"stream":false});
+        let mut body = json!({
+            "model": self.model,
+            "messages": all,
+            "max_tokens": max_tokens,
+            "stream": false,
+            "reasoning": {"enabled": false}
+        });
         if roleplay {
             body["tools"] = json!([openai_tool_definition()]);
             body["tool_choice"] =
@@ -193,12 +198,14 @@ mod tests {
         let body = client.body("persona".into(), vec![], 600, true);
         assert_eq!(body["model"], "qwen/qwen3.8-27b");
         assert_eq!(body["messages"][0]["content"], "persona");
+        assert_eq!(body["reasoning"]["enabled"], false);
         assert_eq!(body["provider"]["require_parameters"], true);
         assert_eq!(
             body["tool_choice"]["function"]["name"],
             "update_scene_state"
         );
         let summary = client.body("summary".into(), vec![], 400, false);
+        assert_eq!(summary["reasoning"]["enabled"], false);
         assert!(summary.get("tools").is_none());
         assert!(summary.get("tool_choice").is_none());
     }
