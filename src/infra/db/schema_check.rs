@@ -13,6 +13,10 @@ pub async fn ensure_ready(pool: &PgPool) -> anyhow::Result<()> {
     let row = sql_query("SELECT public.talkrai_schema_version() AS version")
         .get_result::<SchemaVersion>(&mut conn)
         .await?;
-    anyhow::ensure!(row.version == 24, "Apply migration 024 before deployment");
+    // This release runs on 023 and 024 so Fly /ready-check stays green while 024 is applied; tighten to 24 when the regeneration drain is removed.
+    anyhow::ensure!(
+        (23..=24).contains(&row.version),
+        "Apply migration 023 or 024 before deployment"
+    );
     Ok(())
 }

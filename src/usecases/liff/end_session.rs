@@ -59,20 +59,23 @@ impl EndSessionUseCase {
             .await?
             .ok_or_else(|| UsecaseError::NotFound("No active session found".into()))?;
 
-        // A web reply may be in flight on this story; ending it now would trip the DB guard.
+        // A reply (web or LINE) may be in flight on this story; ending it now would trip the DB guard.
         if self
             .job_repo
             .has_active_job_for_session(session.id())
             .await?
         {
             return Err(UsecaseError::Validation(
-                "ตัวละครกำลังตอบอยู่ รอสักครู่แล้วลองใหม่".into(),
+                super::REPLY_IN_FLIGHT_MESSAGE.into(),
             ));
         }
 
         // 3. End session (domain state transition: Active → Ended)
         session.end()?;
-        self.session_repo.update(&session).await?;
+        self.session_repo
+            .update(&session)
+            .await
+            .map_err(super::story_update_error)?;
 
         // 4. Fetch character + scene for Flex notification (best-effort)
         let flex_result: Option<serde_json::Value> = async {

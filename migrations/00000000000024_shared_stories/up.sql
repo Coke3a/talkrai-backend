@@ -61,11 +61,14 @@ BEGIN
  IF (SELECT count(*) FROM jobs WHERE user_id=p_user AND created_at>now()-interval '1 minute')>=30 THEN RETURN jsonb_build_object('error','RATE_LIMITED'); END IF;
  SELECT * INTO s FROM roleplay_sessions WHERE id=p_session AND user_id=p_user FOR UPDATE;
  IF NOT FOUND THEN RETURN jsonb_build_object('error','NOT_FOUND'); END IF;
- IF s.status<>'active' OR NOT EXISTS(SELECT 1 FROM scenes sc JOIN characters c ON c.id=sc.character_id WHERE sc.id=s.scene_id AND sc.is_active AND c.is_active) THEN RETURN jsonb_build_object('error','SCENE_UNAVAILABLE'); END IF;
+ IF s.status<>'active' THEN RETURN jsonb_build_object('error','STORY_ENDED'); END IF;
+ IF NOT EXISTS(SELECT 1 FROM scenes sc JOIN characters c ON c.id=sc.character_id WHERE sc.id=s.scene_id AND sc.is_active AND c.is_active) THEN RETURN jsonb_build_object('error','SCENE_UNAVAILABLE'); END IF;
  IF u.terms_accepted_at IS NULL THEN RETURN jsonb_build_object('error','TERMS_REQUIRED'); END IF;
  -- One reply at a time per story; other stories of the same user run concurrently.
  SELECT origin INTO busy_origin FROM jobs WHERE session_id=p_session AND mode='roleplay_message' AND status IN('pending','processing') LIMIT 1;
  IF FOUND THEN RETURN jsonb_build_object('error',CASE WHEN busy_origin=p_origin THEN 'TURN_IN_PROGRESS' ELSE 'TURN_IN_PROGRESS_ELSEWHERE' END); END IF;
+ -- Fairness: at most 3 in-flight replies per user so one user cannot hold the shared worker pool.
+ IF (SELECT count(*) FROM jobs WHERE user_id=p_user AND mode='roleplay_message' AND status IN('pending','processing'))>=3 THEN RETURN jsonb_build_object('error','RATE_LIMITED'); END IF;
  IF p_origin='web' AND s.context_version<>(p->>'expected_version')::bigint THEN RETURN jsonb_build_object('error','STALE_VERSION'); END IF;
  IF length(btrim(p->>'content')) NOT BETWEEN 1 AND 4000 THEN RETURN jsonb_build_object('error','VALIDATION_ERROR'); END IF;
  IF u.last_check_in_on IS DISTINCT FROM today THEN

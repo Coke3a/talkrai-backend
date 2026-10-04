@@ -107,18 +107,21 @@ impl StartSessionUseCase {
         if let Some(mut active_session) =
             self.session_repo.find_active_by_user_id(user.id()).await?
         {
-            // A web reply may be in flight on this story; ending it now would trip the DB guard.
+            // A reply (web or LINE) may be in flight on this story; ending it now would trip the DB guard.
             if self
                 .job_repo
                 .has_active_job_for_session(active_session.id())
                 .await?
             {
                 return Err(UsecaseError::Validation(
-                    "ตัวละครกำลังตอบอยู่ รอสักครู่แล้วลองใหม่".into(),
+                    super::REPLY_IN_FLIGHT_MESSAGE.into(),
                 ));
             }
             active_session.end()?;
-            self.session_repo.update(&active_session).await?;
+            self.session_repo
+                .update(&active_session)
+                .await
+                .map_err(super::story_update_error)?;
             tracing::info!(
                 session_id = %active_session.id().as_uuid(),
                 "Ended previous active session before starting new one"
