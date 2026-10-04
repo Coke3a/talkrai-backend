@@ -7,7 +7,7 @@ use diesel_async::RunQueryDsl;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use talkrai_backend::{
-    domain::web::TurnRepository,
+    domain::web::{TurnRepository, WebError},
     infra::db::{postgres_connection::create_pool, repositories::turn_postgres::TurnPostgres},
 };
 use uuid::Uuid;
@@ -170,46 +170,22 @@ async fn simultaneous_turns_and_payment_callbacks_settle_once() {
         1,
         "completed replay must not call AI"
     );
-    let mut conn = pool.get().await.unwrap();
-    let settled = sql_query("SELECT result AS value FROM jobs WHERE id=$1")
-        .bind::<SqlUuid, _>(engine_job)
-        .get_result::<Row>(&mut conn)
-        .await
-        .unwrap();
-    drop(conn);
-    let regen = turns
-        .admit(
-            owner,
-            story,
-            "web",
-            "regeneration",
-            "engine-regen",
-            json!({"message_id":settled.value["message_id"],"expected_version":2}),
-        )
-        .await
-        .unwrap();
-    talkrai_backend::usecases::roleplay::generate::GenerateTurn::execute(
-        &engine,
-        serde_json::from_value(regen["id"].clone()).unwrap(),
-    )
-    .await
-    .unwrap();
-    {
-        let requests = ai.requests.lock().unwrap();
-        assert_eq!(requests.len(), 2);
-        assert_eq!(
-            requests[0].messages.last().unwrap().content,
-            requests[1].messages.last().unwrap().content,
-            "regeneration repeats original user input"
-        );
-        assert!(
-            !requests[1]
-                .messages
-                .iter()
-                .any(|m| m.content.contains("คำตอบทดสอบจากตัวละคร")),
-            "regeneration cannot see rejected answer"
-        );
-    }
+    assert!(
+        matches!(
+            turns
+                .admit(
+                    owner,
+                    story,
+                    "web",
+                    "regeneration",
+                    "engine-regen",
+                    json!({"message_id":Uuid::new_v4(),"expected_version":2}),
+                )
+                .await,
+            Err(WebError::Rejected("VALIDATION_ERROR"))
+        ),
+        "regeneration is retired"
+    );
     ai.fail.store(true, std::sync::atomic::Ordering::Relaxed);
     let failed = turns
         .admit(
@@ -218,7 +194,7 @@ async fn simultaneous_turns_and_payment_callbacks_settle_once() {
             "web",
             "turn",
             "engine-failed",
-            json!({"content":"ข้อความที่ AI ตอบไม่ได้","expected_version":3}),
+            json!({"content":"ข้อความที่ AI ตอบไม่ได้","expected_version":2}),
         )
         .await
         .unwrap();
@@ -232,7 +208,7 @@ async fn simultaneous_turns_and_payment_callbacks_settle_once() {
     );
     let mut conn = pool.get().await.unwrap();
     let state=sql_query("SELECT jsonb_build_object('balance',balance,'reserved',reserved,'count',(SELECT message_count FROM roleplay_sessions WHERE id=$2)) AS value FROM credit_balances WHERE user_id=$1").bind::<SqlUuid,_>(owner).bind::<SqlUuid,_>(story).get_result::<Row>(&mut conn).await.unwrap();
-    assert_eq!(state.value, json!({"balance":46,"reserved":0,"count":2}));
+    assert_eq!(state.value, json!({"balance":48,"reserved":0,"count":2}));
     let line_story = Uuid::new_v4();
     sql_query("INSERT INTO roleplay_sessions(id,user_id,character_id,scene_id,interaction_channel) VALUES($1,$2,$3,$4,'line')").bind::<SqlUuid,_>(line_story).bind::<SqlUuid,_>(owner).bind::<SqlUuid,_>(character).bind::<SqlUuid,_>(scene).execute(&mut conn).await.unwrap();
     sql_query("UPDATE users SET last_check_in_on=null,check_in_streak=0 WHERE id=$1")
@@ -253,7 +229,7 @@ async fn simultaneous_turns_and_payment_callbacks_settle_once() {
             "web",
             "turn",
             "cross-web",
-            json!({"content":"hello","expected_version":3})
+            json!({"content":"hello","expected_version":2})
         ),
         turns.admit(
             owner,

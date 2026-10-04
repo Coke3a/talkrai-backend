@@ -17,4 +17,6 @@ run migrations/00000000000024_shared_stories/down.sql
 [ "$(psql -tAc 'SELECT talkrai_schema_version()')" = 23 ]
 run migrations/00000000000024_shared_stories/up.sql
 run tests/sql/024_shared_stories_check.sql
+run tests/web_security.sql
+run tests/web_transactions.sql
 echo "migrations + shared stories checks: OK"
