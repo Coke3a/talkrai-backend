@@ -263,6 +263,9 @@ impl ReceiveWebhookUseCase {
                                 crate::domain::web::WebError::Rejected(
                                     "TURN_IN_PROGRESS_ELSEWHERE",
                                 ) => "ตัวละครกำลังตอบข้อความจากเว็บอยู่ ส่งใหม่อีกครั้งได้เลยเมื่อตอบเสร็จ",
+                                crate::domain::web::WebError::Rejected("RATE_LIMITED") => {
+                                    "ตอนนี้ส่งข้อความถี่หรือหลายเรื่องพร้อมกันเกินไป รอให้ตัวละครตอบก่อนแล้วลองใหม่"
+                                }
                                 _ => "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง",
                             };
                             let _ = self
