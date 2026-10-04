@@ -897,93 +897,6 @@
         ]
       }
     },
-    "/api/web/sessions/{id}/transfer-to-web": {
-      "post": {
-        "operationId": "post__api_web_sessions_id_transfer-to-web",
-        "responses": {
-          "200": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Story"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "400 validation; 401 expired; 402 credits; 403 consent/suspension/CSRF; 404 resource; 409 conflict; 429 rate; 502 upstream; 503 admissions closed. Private responses are no-store.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "webSession": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "expected_version": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "expected_version"
-                ]
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "Origin",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            }
-          }
-        ]
-      }
-    },
     "/api/web/sessions/{id}/persona": {
       "patch": {
         "operationId": "patch__api_web_sessions_id_persona",
@@ -1080,7 +993,7 @@
             }
           },
           "default": {
-            "description": "400 validation; 401 expired; 402 credits; 403 consent/suspension/CSRF; 404 resource; 409 conflict; 429 rate; 502 upstream; 503 admissions closed. Private responses are no-store.",
+            "description": "400 validation; 401 expired; 402 credits; 403 consent/suspension/CSRF; 404 resource; 409 conflict (STALE_VERSION; TURN_IN_PROGRESS: this surface is already replying on this story; TURN_IN_PROGRESS_ELSEWHERE: the other surface, LINE or web, is replying on this story); 429 rate; 502 upstream; 503 admissions closed. Private responses are no-store.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1113,98 +1026,6 @@
                 },
                 "required": [
                   "content",
-                  "expected_version"
-                ]
-              }
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          },
-          {
-            "name": "Origin",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "X-CSRF-Token",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "Idempotency-Key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 128
-            }
-          }
-        ]
-      }
-    },
-    "/api/web/sessions/{id}/regenerations": {
-      "post": {
-        "operationId": "post__api_web_sessions_id_regenerations",
-        "responses": {
-          "202": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Job"
-                }
-              }
-            }
-          },
-          "default": {
-            "description": "400 validation; 401 expired; 402 credits; 403 consent/suspension/CSRF; 404 resource; 409 conflict; 429 rate; 502 upstream; 503 admissions closed. Private responses are no-store.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "webSession": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "message_id": {
-                    "type": "string",
-                    "format": "uuid"
-                  },
-                  "expected_version": {
-                    "type": "integer"
-                  }
-                },
-                "required": [
-                  "message_id",
                   "expected_version"
                 ]
               }
@@ -1531,6 +1352,13 @@
                 "type": "null"
               }
             ]
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "line",
+              "web"
+            ]
           }
         },
         "required": [
@@ -1583,8 +1411,19 @@
           "sequence": {
             "type": "integer"
           },
-          "is_regeneratable": {
-            "type": "boolean"
+          "origin": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "line",
+                  "web"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1595,7 +1434,7 @@
           "blocks",
           "created_at",
           "sequence",
-          "is_regeneratable"
+          "origin"
         ]
       },
       "Package": {
@@ -1637,9 +1476,6 @@
           "cost_per_turn": {
             "type": "integer"
           },
-          "cost_per_regeneration": {
-            "type": "integer"
-          },
           "packages": {
             "type": "array",
             "items": {
@@ -1652,7 +1488,6 @@
           "reserved",
           "available",
           "cost_per_turn",
-          "cost_per_regeneration",
           "packages"
         ]
       },
@@ -1978,18 +1813,10 @@
             "properties": {
               "can_send": {
                 "type": "boolean"
-              },
-              "can_regenerate": {
-                "type": "boolean"
-              },
-              "can_transfer_to_web": {
-                "type": "boolean"
               }
             },
             "required": [
-              "can_send",
-              "can_regenerate",
-              "can_transfer_to_web"
+              "can_send"
             ]
           }
         },

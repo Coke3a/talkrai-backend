@@ -13,9 +13,6 @@ pub async fn ensure_ready(pool: &PgPool) -> anyhow::Result<()> {
     let row = sql_query("SELECT public.talkrai_schema_version() AS version")
         .get_result::<SchemaVersion>(&mut conn)
         .await?;
-    anyhow::ensure!(
-        row.version == 23,
-        "Apply the complete migration 023 before deployment"
-    );
+    anyhow::ensure!(row.version == 24, "Apply migration 024 before deployment");
     Ok(())
 }

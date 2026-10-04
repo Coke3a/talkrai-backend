@@ -152,10 +152,8 @@ pub fn router() -> Router<Arc<WebRuntime>> {
         .route("/api/web/sessions/{id}", get(story))
         .route("/api/web/sessions/{id}/messages", get(messages))
         .route("/api/web/sessions/{id}/resume", post(resume))
-        .route("/api/web/sessions/{id}/transfer-to-web", post(transfer))
         .route("/api/web/sessions/{id}/persona", patch(persona))
         .route("/api/web/sessions/{id}/turns", post(turn))
-        .route("/api/web/sessions/{id}/regenerations", post(regenerate))
         .route("/api/web/jobs/{id}", get(job))
         .route("/api/web/credits", get(credits))
         .route("/api/web/credit-transactions", get(transactions))
@@ -520,7 +518,6 @@ macro_rules! mutate {
     };
 }
 mutate!(resume, "resume");
-mutate!(transfer, "transfer");
 mutate!(persona, "persona");
 macro_rules! generation {
     ($name:ident,$kind:literal) => {
@@ -545,7 +542,6 @@ macro_rules! generation {
     };
 }
 generation!(turn, "turn");
-generation!(regenerate, "regeneration");
 
 #[derive(Deserialize)]
 struct PaymentInput {

@@ -260,6 +260,9 @@ impl ReceiveWebhookUseCase {
                                 crate::domain::web::WebError::Rejected("TURN_IN_PROGRESS") => {
                                     "กำลังตอบข้อความก่อนหน้าอยู่ รอสักครู่นะ"
                                 }
+                                crate::domain::web::WebError::Rejected(
+                                    "TURN_IN_PROGRESS_ELSEWHERE",
+                                ) => "ตัวละครกำลังตอบข้อความจากเว็บอยู่ ส่งใหม่อีกครั้งได้เลยเมื่อตอบเสร็จ",
                                 _ => "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง",
                             };
                             let _ = self

@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use crate::domain::entities::{Message, RoleplaySession};
 use crate::domain::repositories::{
-    CharacterRepository, MessageRepository, RoleplaySessionRepository, SceneRepository,
-    UserRepository,
+    CharacterRepository, JobRepository, MessageRepository, RoleplaySessionRepository,
+    SceneRepository, UserRepository,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
 use crate::domain::value_objects::MessageRole;
@@ -37,6 +37,7 @@ pub struct StartSessionOutput {
 pub struct StartSessionUseCase {
     user_repo: Arc<dyn UserRepository>,
     session_repo: Arc<dyn RoleplaySessionRepository>,
+    job_repo: Arc<dyn JobRepository>,
     scene_repo: Arc<dyn SceneRepository>,
     character_repo: Arc<dyn CharacterRepository>,
     message_repo: Arc<dyn MessageRepository>,
@@ -47,6 +48,7 @@ impl StartSessionUseCase {
     pub fn new(
         user_repo: Arc<dyn UserRepository>,
         session_repo: Arc<dyn RoleplaySessionRepository>,
+        job_repo: Arc<dyn JobRepository>,
         scene_repo: Arc<dyn SceneRepository>,
         character_repo: Arc<dyn CharacterRepository>,
         message_repo: Arc<dyn MessageRepository>,
@@ -55,6 +57,7 @@ impl StartSessionUseCase {
         Self {
             user_repo,
             session_repo,
+            job_repo,
             scene_repo,
             character_repo,
             message_repo,
@@ -104,6 +107,16 @@ impl StartSessionUseCase {
         if let Some(mut active_session) =
             self.session_repo.find_active_by_user_id(user.id()).await?
         {
+            // A web reply may be in flight on this story; ending it now would trip the DB guard.
+            if self
+                .job_repo
+                .has_active_job_for_session(active_session.id())
+                .await?
+            {
+                return Err(UsecaseError::Validation(
+                    "ตัวละครกำลังตอบอยู่ รอสักครู่แล้วลองใหม่".into(),
+                ));
+            }
             active_session.end()?;
             self.session_repo.update(&active_session).await?;
             tracing::info!(
@@ -232,16 +245,18 @@ impl StartSessionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::entities::{Character, RoleplaySession, Scene, User};
+    use crate::domain::entities::{Character, Job, RoleplaySession, Scene, User};
     use crate::domain::repositories::RepoError;
     use crate::domain::services::line_client::LineProfile;
     use crate::domain::services::LineClientError;
+    use crate::domain::value_objects::JobId;
     use crate::domain::value_objects::{
         CharacterGender, CharacterId, CharacterMood, CharacterName, RelationshipLevel, SceneId,
         SceneName, SessionId, UserId, UserStatus,
     };
     use async_trait::async_trait;
     use chrono::Utc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
     // ── derive_opening_quick_reply (pure) ──────────────────────
@@ -350,7 +365,12 @@ mod tests {
         }
     }
 
-    struct MockSessionRepo;
+    #[derive(Default)]
+    struct MockSessionRepo {
+        active: Mutex<Option<RoleplaySession>>,
+        updates: AtomicUsize,
+        creates: AtomicUsize,
+    }
     #[async_trait]
     impl RoleplaySessionRepository for MockSessionRepo {
         async fn find_by_id(&self, _: &SessionId) -> Result<Option<RoleplaySession>, RepoError> {
@@ -360,16 +380,52 @@ mod tests {
             &self,
             _: &UserId,
         ) -> Result<Option<RoleplaySession>, RepoError> {
-            Ok(None)
+            Ok(self.active.lock().unwrap().take())
         }
         async fn count_by_user_id(&self, _: &UserId) -> Result<i64, RepoError> {
             Ok(0)
         }
         async fn create(&self, _: &RoleplaySession) -> Result<(), RepoError> {
+            self.creates.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
         async fn update(&self, _: &RoleplaySession) -> Result<(), RepoError> {
+            self.updates.fetch_add(1, Ordering::SeqCst);
             Ok(())
+        }
+    }
+
+    struct MockJobRepo {
+        active: bool,
+    }
+    #[async_trait]
+    impl JobRepository for MockJobRepo {
+        async fn create(&self, _: &Job) -> Result<(), RepoError> {
+            unimplemented!()
+        }
+        async fn create_many(&self, _: &[Job]) -> Result<(), RepoError> {
+            unimplemented!()
+        }
+        async fn find_by_id(&self, _: &JobId) -> Result<Option<Job>, RepoError> {
+            unimplemented!()
+        }
+        async fn lock_pending_job(&self, _: &JobId) -> Result<Option<Job>, RepoError> {
+            unimplemented!()
+        }
+        async fn mark_processing_if_pending(&self, _: &Job) -> Result<bool, RepoError> {
+            unimplemented!()
+        }
+        async fn find_and_lock_pending_jobs(&self, _: i64) -> Result<Vec<Job>, RepoError> {
+            unimplemented!()
+        }
+        async fn find_stale_processing_jobs(&self, _: i64) -> Result<Vec<Job>, RepoError> {
+            unimplemented!()
+        }
+        async fn has_active_job_for_session(&self, _: &SessionId) -> Result<bool, RepoError> {
+            Ok(self.active)
+        }
+        async fn update(&self, _: &Job) -> Result<(), RepoError> {
+            unimplemented!()
         }
     }
 
@@ -486,9 +542,24 @@ mod tests {
     }
 
     fn usecase(scene: Scene, line: Arc<RecordingLineClient>) -> StartSessionUseCase {
+        usecase_with(
+            scene,
+            line,
+            Arc::new(MockSessionRepo::default()),
+            MockJobRepo { active: false },
+        )
+    }
+
+    fn usecase_with(
+        scene: Scene,
+        line: Arc<RecordingLineClient>,
+        sessions: Arc<MockSessionRepo>,
+        jobs: MockJobRepo,
+    ) -> StartSessionUseCase {
         StartSessionUseCase::new(
             Arc::new(MockUserRepo),
-            Arc::new(MockSessionRepo),
+            sessions,
+            Arc::new(jobs),
             Arc::new(MockSceneRepo {
                 scene: Mutex::new(Some(scene)),
             }),
@@ -544,5 +615,36 @@ mod tests {
             pushed.iter().all(|qr| qr.is_none()),
             "no message carries a quick reply when the column is empty"
         );
+    }
+
+    #[tokio::test]
+    async fn rejects_when_active_story_has_job_in_flight() {
+        let sessions = Arc::new(MockSessionRepo::default());
+        *sessions.active.lock().unwrap() = Some(RoleplaySession::new(
+            UserId::new(),
+            CharacterId::new(),
+            SceneId::new(),
+            RelationshipLevel::Stranger,
+            CharacterMood::Neutral,
+        ));
+        let line = Arc::new(RecordingLineClient::new());
+
+        let result = usecase_with(
+            test_scene(vec![]),
+            Arc::clone(&line),
+            Arc::clone(&sessions),
+            MockJobRepo { active: true },
+        )
+        .execute(input())
+        .await;
+
+        assert!(matches!(result, Err(UsecaseError::Validation(_))));
+        assert_eq!(
+            sessions.updates.load(Ordering::SeqCst),
+            0,
+            "active story must not be ended"
+        );
+        assert_eq!(sessions.creates.load(Ordering::SeqCst), 0);
+        assert!(line.pushed.lock().unwrap().is_empty());
     }
 }
