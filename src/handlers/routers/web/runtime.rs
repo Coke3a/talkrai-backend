@@ -104,6 +104,7 @@ pub fn spawn(
         config,
         ai,
     });
+    let web_origin = runtime.origin.clone();
     tokio::spawn(async move {
         let delivery_cancel = cancel.clone();
         let delivery = tokio::spawn(async move {
@@ -112,7 +113,7 @@ pub fn spawn(
                 tokio::select! {
                     _ = delivery_cancel.cancelled() => break,
                     _ = interval.tick() => {
-                        if let Err(error) = crate::infra::line::shared_delivery::deliver_pending(pool.clone(),line.clone()).await {
+                        if let Err(error) = crate::infra::line::shared_delivery::deliver_pending(pool.clone(),line.clone(),web_origin.clone()).await {
                             tracing::error!(%error,"Delivery retry failed");
                         }
                     }

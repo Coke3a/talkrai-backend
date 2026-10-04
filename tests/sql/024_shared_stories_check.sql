@@ -92,4 +92,23 @@ END $$;
 -- 11. Schema version.
 DO $$ BEGIN ASSERT talkrai_schema_version()=24, '11: schema version should be 24'; END $$;
 
+-- 12. LINE notice count (shared_delivery web_turns subquery) on a fresh story D.
+-- Timeline: Wp web (old) | L0 line | L1 line t0 | W1,W2 web completed | Wf web failed | L2 line created after W2.
+INSERT INTO roleplay_sessions(id,user_id,character_id,scene_id,interaction_channel,status) VALUES
+('00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-0000000000c1','00000000-0000-0000-0000-000000000052','web','active');
+INSERT INTO jobs(id,session_id,user_id,line_user_id,user_message,origin,kind,status,created_at,completed_at) VALUES
+('00000000-0000-0000-0000-00000000d0f0','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001',NULL,'before','web','turn','completed','2030-01-01 09:40:00+00','2030-01-01 09:41:00+00'),
+('00000000-0000-0000-0000-00000000d090','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','Ucheck','l0','line','turn','completed','2030-01-01 09:45:00+00','2030-01-01 09:45:30+00'),
+('00000000-0000-0000-0000-00000000d0a1','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','Ucheck','l1','line','turn','completed','2030-01-01 10:00:00+00','2030-01-01 10:00:30+00'),
+('00000000-0000-0000-0000-00000000d0b1','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001',NULL,'w1','web','turn','completed','2030-01-01 10:10:00+00','2030-01-01 10:10:30+00'),
+('00000000-0000-0000-0000-00000000d0b2','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001',NULL,'w2','web','turn','completed','2030-01-01 10:20:00+00','2030-01-01 10:20:30+00'),
+('00000000-0000-0000-0000-00000000d0b3','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001',NULL,'wf','web','turn','failed','2030-01-01 10:25:00+00','2030-01-01 10:25:30+00'),
+('00000000-0000-0000-0000-00000000d0a2','00000000-0000-0000-0000-0000000000d1','00000000-0000-0000-0000-000000000001','Ucheck','l2','line','turn','completed','2030-01-01 10:30:00+00','2030-01-01 10:30:30+00');
+DO $$ DECLARE n1 bigint; n2 bigint; BEGIN
+ SELECT (SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) INTO n2 FROM jobs j WHERE j.id='00000000-0000-0000-0000-00000000d0a2';
+ SELECT (SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) INTO n1 FROM jobs j WHERE j.id='00000000-0000-0000-0000-00000000d0a1';
+ ASSERT n2=2, '12: L2 should count exactly W1 and W2, got '||n2;
+ ASSERT n1=0, '12: L1 should count nothing (old web turn precedes the previous LINE message), got '||n1;
+END $$;
+
 ROLLBACK;

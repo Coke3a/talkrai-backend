@@ -98,14 +98,20 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
         entered: Semaphore::new(0),
         release: Semaphore::new(0),
     });
-    let first = tokio::spawn(deliver_pending(pool.clone(), line.clone()));
+    let first = tokio::spawn(deliver_pending(
+        pool.clone(),
+        line.clone(),
+        "https://app.talkrai.app".into(),
+    ));
     tokio::time::timeout(std::time::Duration::from_secs(5), line.entered.acquire())
         .await
         .unwrap()
         .unwrap()
         .forget();
     // Another worker cannot take the in-flight job.
-    deliver_pending(pool.clone(), line.clone()).await.unwrap();
+    deliver_pending(pool.clone(), line.clone(), "https://app.talkrai.app".into())
+        .await
+        .unwrap();
     assert_eq!(*line.keys.lock().unwrap(), vec![job]);
     let mut conn = pool.get().await.unwrap();
     sql_query("UPDATE jobs SET delivery_retry_at=now()-interval '1 second' WHERE id=$1")
@@ -114,7 +120,11 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
         .await
         .unwrap();
     drop(conn);
-    let second = tokio::spawn(deliver_pending(pool.clone(), line.clone()));
+    let second = tokio::spawn(deliver_pending(
+        pool.clone(),
+        line.clone(),
+        "https://app.talkrai.app".into(),
+    ));
     tokio::time::timeout(std::time::Duration::from_secs(5), line.entered.acquire())
         .await
         .unwrap()
@@ -147,7 +157,9 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
     // A process crash on the last claim must become terminal after lease expiry.
     sql_query("UPDATE jobs SET delivery_status='pending',delivery_attempts=10,delivery_retry_at=now()-interval '1 second' WHERE id=$1").bind::<SqlUuid,_>(job).execute(&mut conn).await.unwrap();
     drop(conn);
-    deliver_pending(pool.clone(), line).await.unwrap();
+    deliver_pending(pool.clone(), line, "https://app.talkrai.app".into())
+        .await
+        .unwrap();
     let mut conn = pool.get().await.unwrap();
     let status = sql_query("SELECT delivery_status FROM jobs WHERE id=$1")
         .bind::<SqlUuid, _>(job)

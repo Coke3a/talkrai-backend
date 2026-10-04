@@ -28,13 +28,30 @@ struct Delivery {
     reply_token: Option<String>,
     #[diesel(sql_type=Timestamptz)]
     created_at: chrono::DateTime<chrono::Utc>,
+    #[diesel(sql_type=SqlUuid)]
+    session_id: Uuid,
+    #[diesel(sql_type=diesel::sql_types::BigInt)]
+    web_turns: i64,
 }
-pub async fn deliver_pending(pool: Arc<PgPool>, line: Arc<dyn LineClient>) -> anyhow::Result<()> {
+/// One-line LINE notice for web turns completed since LINE's previous message in the same story.
+pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -> Option<String> {
+    (web_turns > 0).then(|| {
+        format!(
+            "มีการคุยต่อบนเว็บ {web_turns} ข้อความ ดูได้ที่ {}/stories/{session_id}",
+            web_origin.trim_end_matches('/')
+        )
+    })
+}
+pub async fn deliver_pending(
+    pool: Arc<PgPool>,
+    line: Arc<dyn LineClient>,
+    web_origin: String,
+) -> anyhow::Result<()> {
     let mut conn = pool.get().await?;
     // Expired final attempts must not remain pending forever after a process crash.
     sql_query("UPDATE jobs SET delivery_status='failed' WHERE origin='line' AND delivery_status='pending' AND delivery_retry_at<now() AND (delivery_attempts>=10 OR delivery_first_attempt_at<now()-interval '23 hours')")
         .execute(&mut conn).await?;
-    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id JOIN roleplay_sessions s ON s.id=j.session_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' AND s.interaction_channel='line' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id").load::<Delivery>(&mut conn).await?;
+    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar,j.session_id,(SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) AS web_turns FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id").load::<Delivery>(&mut conn).await?;
     drop(conn);
     for item in rows {
         let blocks = crate::infra::ai::response::parse_text_into_blocks(&item.content);
@@ -48,13 +65,20 @@ pub async fn deliver_pending(pool: Arc<PgPool>, line: Arc<dyn LineClient>) -> an
             sender_icon_url: item.avatar,
             quick_reply: None,
         };
+        let mut messages = Vec::new();
+        if let Some(text) = web_activity_notice(item.web_turns, &web_origin, item.session_id) {
+            messages.push(LineMessage::Text {
+                text,
+                sender_name: String::new(),
+                sender_icon_url: String::new(),
+            });
+        }
+        messages.push(message);
         // One claim at a time; the entire network attempt ends before its lease expires.
         let result = tokio::time::timeout(std::time::Duration::from_secs(45), async {
             let reply = if (chrono::Utc::now() - item.created_at).num_seconds() < 50 {
                 if let Some(token) = item.reply_token {
-                    line.reply_messages(&token, vec![message.clone()])
-                        .await
-                        .is_ok()
+                    line.reply_messages(&token, messages.clone()).await.is_ok()
                 } else {
                     false
                 }
@@ -64,7 +88,7 @@ pub async fn deliver_pending(pool: Arc<PgPool>, line: Arc<dyn LineClient>) -> an
             if reply {
                 Ok(())
             } else {
-                line.push_messages_with_retry_key(&item.line_user_id, vec![message], item.id)
+                line.push_messages_with_retry_key(&item.line_user_id, messages, item.id)
                     .await
             }
         })
@@ -82,4 +106,24 @@ pub async fn deliver_pending(pool: Arc<PgPool>, line: Arc<dyn LineClient>) -> an
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn no_notice_without_web_turns() {
+        assert_eq!(
+            web_activity_notice(0, "https://app.talkrai.app", Uuid::nil()),
+            None
+        );
+    }
+    #[test]
+    fn notice_counts_web_turns_and_links_story() {
+        let id = Uuid::parse_str("11111111-2222-3333-4444-555555555555").unwrap();
+        assert_eq!(
+            web_activity_notice(3, "https://app.talkrai.app/", id).as_deref(),
+            Some("มีการคุยต่อบนเว็บ 3 ข้อความ ดูได้ที่ https://app.talkrai.app/stories/11111111-2222-3333-4444-555555555555")
+        );
+    }
 }
