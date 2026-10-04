@@ -397,12 +397,24 @@ export function countLineTurns(
 
 ## Rollout (for the user — NOT executed by agents)
 
-Order matters; the backend refuses to start unless schema version = 24, and the running old backend keeps working on the new functions (they are backward compatible except that regenerate/transfer now return 4xx).
+Why this order: Fly's `/ready-check` runs the schema check every 30s. This release's backend accepts schema 23 **or** 24 and works on both (on 23, regenerate/transfer are simply gone and turns still lock per user). The old backend accepts only 23, so **never apply 024 before the new backend is live**, or Fly marks the old machine unhealthy and LINE + web go down. The new webapp needs 024 (on 023 a LINE story's composer would be disabled), so it goes last.
 
-1. Review branches `feat/shared-stories` (backend, webapp). Run `bash scripts/verify-migrations.sh` locally.
-2. Check no `roleplay_message` job is pending/processing in prod (optional; functions swap atomically).
-3. Apply `migrations/00000000000024_shared_stories/up.sql` to prod (one transaction) and insert `00000000000024` into `__diesel_schema_migrations` (see memory: prod migration 021 gap — do not run a blanket `diesel migration run`).
-4. Immediately merge + push backend `main` (CI deploys to Fly). Until it is live, a backend restart would fail the schema check — keep the window short.
-5. Merge + push webapp `main` (Cloudflare Workers Builds deploys).
-6. Smoke: LINE send → reply; open the same story on web, send → reply; LINE send → reply starts with "มีการคุยต่อบนเว็บ 1 ข้อความ …"; web shows "มีการคุยต่อใน LINE 1 ข้อความ".
-7. Rollback: apply `down.sql` (restores 023 functions, version 23) and redeploy previous backend + webapp commits.
+0. Pre-checks: review both `feat/shared-stories` branches; run `bash scripts/verify-migrations.sh` locally; confirm prod is at 023 (`SELECT talkrai_schema_version()` = 23).
+1. Merge + push backend `main` (CI → Fly). Wait until the deploy is healthy (`/ready-check` = 200, LINE replies still work).
+2. Apply 024 to prod as ONE transaction:
+   ```sql
+   BEGIN;
+   SET LOCAL lock_timeout = '3s';
+   -- paste migrations/00000000000024_shared_stories/up.sql
+   INSERT INTO __diesel_schema_migrations(version) VALUES ('00000000000024');
+   COMMIT;
+   ```
+   `DROP INDEX` / `CREATE UNIQUE INDEX` briefly lock `jobs`; on lock timeout nothing is applied — just retry. Do not run a blanket `diesel migration run` (prod has the 021 gap). Verify `SELECT talkrai_schema_version()` = 24 and `/ready-check` = 200.
+3. Only now merge + push webapp `main` (Cloudflare Workers Builds deploys on push).
+4. Smoke test (costs a few credits):
+   - Open a LINE story on the web (it should have a composer). Send from LINE; switch back to the browser tab → "มีการคุยต่อใน LINE 1 ข้อความ" (not shown on a fresh page load, by design).
+   - Send from the web, then from LINE → the LINE reply is preceded by "มีการคุยต่อบนเว็บ 1 ข้อความ ดูได้ที่ …".
+   - Send on the web while LINE is replying → "ตัวละครกำลังตอบข้อความจาก LINE อยู่ …", draft kept.
+   - Two web tabs with two different characters → both reply concurrently.
+5. Rollback (reverse order): (a) revert webapp `main`; (b) apply `down.sql` in one transaction with `SET LOCAL lock_timeout='3s'` and `DELETE FROM __diesel_schema_migrations WHERE version='00000000000024'` — it fails (and rolls back cleanly) while any user has in-flight jobs on two stories, so retry when `SELECT user_id FROM jobs WHERE mode='roleplay_message' AND status IN('pending','processing') GROUP BY 1 HAVING count(*)>1` is empty; (c) the current backend still runs on 23, so revert backend only if the bug is in its code.
+6. Follow-up release: remove the regeneration drain (`settle_turn` branch, `generate.rs`) and tighten the schema check to `== 24`.
