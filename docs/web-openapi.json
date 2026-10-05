@@ -1312,8 +1312,7 @@
           "kind": {
             "type": "string",
             "enum": [
-              "turn",
-              "regeneration"
+              "turn"
             ]
           },
           "session_id": {

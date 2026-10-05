@@ -91,10 +91,6 @@ impl RoleplaySession {
     pub fn context_version(&self) -> i64 {
         self.context_version
     }
-    pub fn restore_relationship_context(&mut self, level: RelationshipLevel, count: i32) {
-        self.relationship_level = level;
-        self.message_count = count;
-    }
 
     pub fn id(&self) -> &SessionId {
         &self.id

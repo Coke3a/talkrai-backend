@@ -45,7 +45,6 @@ pub fn checked(value: Option<Value>) -> Result<Value, WebError> {
             "STORY_ENDED" => "STORY_ENDED",
             "IDEMPOTENCY_MISMATCH" => "IDEMPOTENCY_MISMATCH",
             "INSUFFICIENT_CREDITS" => "INSUFFICIENT_CREDITS",
-            "INVALID_REGENERATION" => "INVALID_REGENERATION",
             _ => "NOT_FOUND",
         }));
     }
