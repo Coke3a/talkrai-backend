@@ -35,6 +35,12 @@ struct Delivery {
     session_id: Uuid,
     #[diesel(sql_type=diesel::sql_types::BigInt)]
     web_turns: i64,
+    #[diesel(sql_type=Text)]
+    location: String,
+    #[diesel(sql_type=Text)]
+    time_of_day: String,
+    #[diesel(sql_type=Text)]
+    atmosphere: String,
 }
 /// One-line LINE notice for web turns completed since LINE's previous message in the same story.
 pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -> Option<String> {
@@ -45,6 +51,21 @@ pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -
         )
     })
 }
+/// Same header as the LIFF opening bubble: the story's latest location and time, falling back to the scene's.
+fn reply_bubble(
+    content: &str,
+    location: &str,
+    time_of_day: &str,
+    atmosphere: &str,
+) -> serde_json::Value {
+    let blocks = crate::infra::ai::response::parse_text_into_blocks(content);
+    crate::infra::line::roleplay_flex::build_roleplay_blocks_bubble(
+        &blocks,
+        location,
+        time_of_day,
+        &crate::infra::line::roleplay_flex::extract_color_tone(atmosphere),
+    )
+}
 pub async fn deliver_pending(
     pool: Arc<PgPool>,
     line: Arc<dyn LineClient>,
@@ -54,12 +75,14 @@ pub async fn deliver_pending(
     // Expired final attempts must not remain pending forever after a process crash.
     sql_query("UPDATE jobs SET delivery_status='failed' WHERE origin='line' AND delivery_status='pending' AND delivery_retry_at<now() AND (delivery_attempts>=10 OR delivery_first_attempt_at<now()-interval '23 hours')")
         .execute(&mut conn).await?;
-    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar,j.session_id,(SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.user_id=j.user_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.user_id=j.user_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) AS web_turns FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id").load::<Delivery>(&mut conn).await?;
+    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar,j.session_id,(SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.user_id=j.user_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.user_id=j.user_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) AS web_turns,coalesce(s.current_location,sc.location) AS location,coalesce(s.scene_time,sc.time_of_day) AS time_of_day,sc.atmosphere FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id JOIN scenes sc ON sc.id=s.scene_id").load::<Delivery>(&mut conn).await?;
     drop(conn);
     for item in rows {
-        let blocks = crate::infra::ai::response::parse_text_into_blocks(&item.content);
-        let contents = crate::infra::line::roleplay_flex::build_roleplay_blocks_bubble(
-            &blocks, "", "", "warm",
+        let contents = reply_bubble(
+            &item.content,
+            &item.location,
+            &item.time_of_day,
+            &item.atmosphere,
         );
         let message = LineMessage::Flex {
             alt_text: crate::infra::line::roleplay_flex::truncate_alt_text(&item.content),
@@ -128,5 +151,18 @@ mod tests {
             web_activity_notice(3, "https://app.talkrai.app/", id).as_deref(),
             Some("มีการคุยต่อบนเว็บ 3 ข้อความ ดูได้ที่ https://app.talkrai.app/stories/11111111-2222-3333-4444-555555555555")
         );
+    }
+    #[test]
+    fn bubble_header_shows_story_location_time_and_scene_tone() {
+        let bubble = reply_bubble(
+            "*ยิ้ม* สวัสดีค่ะ",
+            "ร้านหนังสือ 'หน้าถัดไป'",
+            "บ่าย",
+            r#"{"color_tone":"soft_pink"}"#,
+        );
+        let header = &bubble["body"]["contents"][1]["contents"];
+        assert_eq!(header[0]["text"], "📍 ร้านหนังสือ 'หน้าถัดไป'");
+        assert_eq!(header[1]["text"], "🌤️ บ่าย");
+        assert_eq!(header[0]["color"], "#F48FB1");
     }
 }
