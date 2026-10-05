@@ -5,7 +5,7 @@
 /// and in the web credits read (`web_data_postgres.rs`).
 pub const TURN_COST: i32 = 2;
 
-/// Show the "running low" nudge when this many turns or fewer remain (but more than zero).
+/// Show the "running low" nudge after the reply that leaves exactly this many turns.
 pub const LOW_CREDIT_TURNS: i32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,10 +55,21 @@ pub fn turns_left(available_credits: i32) -> i32 {
     available_credits.max(0) / TURN_COST
 }
 
-/// `Some(turns)` when the user should be nudged to top up before running out.
-pub fn low_credit_turns(available_credits: i32) -> Option<i32> {
-    let turns = turns_left(available_credits);
-    (1..=LOW_CREDIT_TURNS).contains(&turns).then_some(turns)
+/// What to attach after a character reply, given the credits left once it was paid for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreditNudge {
+    /// Exactly `LOW_CREDIT_TURNS` turns left: suggest topping up before the story stalls.
+    Low(i32),
+    /// That reply was the last one the wallet covers: say so now, not on the next message.
+    Empty,
+}
+
+pub fn credit_nudge_after_reply(available_credits: i32) -> Option<CreditNudge> {
+    match turns_left(available_credits) {
+        0 => Some(CreditNudge::Empty),
+        LOW_CREDIT_TURNS => Some(CreditNudge::Low(LOW_CREDIT_TURNS)),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -87,14 +98,18 @@ mod tests {
     }
 
     #[test]
-    fn low_credit_nudge_only_for_one_or_two_turns() {
-        assert_eq!(low_credit_turns(0), None);
-        assert_eq!(low_credit_turns(1), None);
-        assert_eq!(low_credit_turns(2), Some(1));
-        assert_eq!(low_credit_turns(3), Some(1));
-        assert_eq!(low_credit_turns(4), Some(2));
-        assert_eq!(low_credit_turns(5), Some(2));
-        assert_eq!(low_credit_turns(6), None);
-        assert_eq!(low_credit_turns(-2), None);
+    fn nudge_low_only_at_exactly_two_turns() {
+        assert_eq!(credit_nudge_after_reply(4), Some(CreditNudge::Low(2)));
+        assert_eq!(credit_nudge_after_reply(5), Some(CreditNudge::Low(2)));
+        assert_eq!(credit_nudge_after_reply(2), None);
+        assert_eq!(credit_nudge_after_reply(3), None);
+        assert_eq!(credit_nudge_after_reply(6), None);
+    }
+
+    #[test]
+    fn nudge_empty_once_the_last_turn_is_spent() {
+        assert_eq!(credit_nudge_after_reply(0), Some(CreditNudge::Empty));
+        assert_eq!(credit_nudge_after_reply(1), Some(CreditNudge::Empty));
+        assert_eq!(credit_nudge_after_reply(-2), Some(CreditNudge::Empty));
     }
 }

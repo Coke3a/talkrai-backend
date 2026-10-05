@@ -22,7 +22,8 @@ pub use character_mood::CharacterMood;
 pub use character_name::CharacterName;
 pub use check_in::{CheckInConfig, CheckInOutcome};
 pub use credit_package::{
-    low_credit_turns, turns_left, CreditPackage, CREDIT_PACKAGES, LOW_CREDIT_TURNS, TURN_COST,
+    credit_nudge_after_reply, turns_left, CreditNudge, CreditPackage, CREDIT_PACKAGES,
+    LOW_CREDIT_TURNS, TURN_COST,
 };
 pub use credit_transaction_type::CreditTransactionType;
 pub use ids::*;

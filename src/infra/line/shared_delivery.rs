@@ -55,26 +55,36 @@ pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -
         )
     })
 }
-/// Low-credit nudge to append after the reply. Only on the first delivery attempt: if that
-/// attempt fails for any reason, retries carry the reply alone, so the extra can never keep
-/// the character's answer from arriving.
-fn low_credit_card(
+/// Credit card to append after the reply: a heads-up at exactly two turns left, or the
+/// out-of-credits card when this reply used the last one. Only on the first delivery attempt:
+/// if that attempt fails for any reason, retries carry the reply alone, so the extra can never
+/// keep the character's answer from arriving.
+fn credit_card(
     liff_base_url: &str,
     character_name: &str,
     available_credits: i32,
     delivery_attempts: i32,
 ) -> Option<LineMessage> {
+    use crate::domain::value_objects::CreditNudge;
+    use crate::infra::line::flex_messages;
     if delivery_attempts > 1 {
         return None;
     }
-    let turns = crate::domain::value_objects::low_credit_turns(available_credits)?;
+    let name = Some(character_name).filter(|name| !name.is_empty());
+    let (alt_text, contents) =
+        match crate::domain::value_objects::credit_nudge_after_reply(available_credits)? {
+            CreditNudge::Low(turns) => (
+                format!("คุยได้อีก {turns} ข้อความ แตะเพื่อเติมเครดิต"),
+                flex_messages::build_low_credit_flex(liff_base_url, name, turns),
+            ),
+            CreditNudge::Empty => (
+                "เครดิตหมดแล้ว แตะเพื่อเติมเครดิตแล้วคุยต่อ".to_string(),
+                flex_messages::build_insufficient_credits_flex(liff_base_url, name),
+            ),
+        };
     Some(LineMessage::Flex {
-        alt_text: format!("คุยได้อีก {turns} ข้อความ แตะเพื่อเติมเครดิต"),
-        contents: crate::infra::line::flex_messages::build_low_credit_flex(
-            liff_base_url,
-            Some(character_name).filter(|name| !name.is_empty()),
-            turns,
-        ),
+        alt_text,
+        contents,
         sender_name: String::new(),
         sender_icon_url: String::new(),
         quick_reply: None,
@@ -114,7 +124,7 @@ pub async fn deliver_pending(
             &item.time_of_day,
             &item.atmosphere,
         );
-        let low_credit = low_credit_card(
+        let credit_nudge = credit_card(
             &liff_base_url,
             &item.name,
             item.available_credits,
@@ -136,7 +146,7 @@ pub async fn deliver_pending(
             });
         }
         messages.push(message);
-        messages.extend(low_credit);
+        messages.extend(credit_nudge);
         // One claim at a time; the entire network attempt ends before its lease expires.
         let result = tokio::time::timeout(std::time::Duration::from_secs(45), async {
             let reply = if (chrono::Utc::now() - item.created_at).num_seconds() < 50 {
@@ -174,30 +184,56 @@ pub async fn deliver_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn card_title(card: Option<LineMessage>) -> Option<String> {
+        match card? {
+            LineMessage::Flex { contents, .. } => contents["body"]["contents"][0]["text"]
+                .as_str()
+                .map(str::to_string),
+            _ => None,
+        }
+    }
     #[test]
-    fn low_credit_card_only_when_one_or_two_turns_left() {
+    fn credit_card_warns_only_at_two_turns_left() {
         let base = "https://liff.line.me/123";
-        assert!(low_credit_card(base, "พีท", 0, 1).is_none());
-        assert!(low_credit_card(base, "พีท", 2, 1).is_some());
-        assert!(low_credit_card(base, "พีท", 4, 1).is_some());
-        assert!(low_credit_card(base, "พีท", 6, 1).is_none());
+        assert_eq!(
+            card_title(credit_card(base, "พีท", 4, 1)).as_deref(),
+            Some("คุยได้อีก 2 ข้อความ")
+        );
+        assert!(
+            credit_card(base, "พีท", 2, 1).is_none(),
+            "one turn left: no card"
+        );
+        assert!(credit_card(base, "พีท", 6, 1).is_none());
     }
     #[test]
-    fn low_credit_card_dropped_on_retry() {
-        assert!(low_credit_card("https://liff.line.me/123", "พีท", 2, 2).is_none());
+    fn credit_card_says_empty_after_the_last_turn() {
+        let base = "https://liff.line.me/123";
+        assert_eq!(
+            card_title(credit_card(base, "พีท", 0, 1)).as_deref(),
+            Some("เครดิตหมดแล้ว")
+        );
+        assert_eq!(
+            card_title(credit_card(base, "พีท", 1, 1)).as_deref(),
+            Some("เครดิตหมดแล้ว")
+        );
     }
     #[test]
-    fn low_credit_card_names_character() {
+    fn credit_card_dropped_on_retry() {
+        let base = "https://liff.line.me/123";
+        assert!(credit_card(base, "พีท", 4, 2).is_none());
+        assert!(credit_card(base, "พีท", 0, 2).is_none());
+    }
+    #[test]
+    fn credit_card_names_character_and_is_sent_as_system() {
         let Some(LineMessage::Flex {
             contents,
             sender_name,
             ..
-        }) = low_credit_card("https://liff.line.me/123", "พีท", 4, 1)
+        }) = credit_card("https://liff.line.me/123", "พีท", 4, 1)
         else {
             panic!("expected a flex card");
         };
         assert_eq!(sender_name, "");
-        assert_eq!(contents["body"]["contents"][0]["text"], "คุยได้อีก 2 ข้อความ");
         assert_eq!(
             contents["body"]["contents"][1]["text"],
             "เติม 29฿ คุยกับพีทต่อได้อีก 25 ข้อความ"
