@@ -5,10 +5,11 @@ use tokio::sync::mpsc;
 
 use crate::domain::entities::{CreditBalance, Job, User};
 use crate::domain::repositories::{
-    AppConfigRepository, CreditRepository, JobRepository, RoleplaySessionRepository, UserRepository,
+    AppConfigRepository, CharacterRepository, CreditRepository, JobRepository,
+    RoleplaySessionRepository, UserRepository,
 };
 use crate::domain::services::line_client::{LineClient, LineMessage};
-use crate::domain::value_objects::{JobId, JobMode, SessionId, UserId};
+use crate::domain::value_objects::{CharacterId, JobId, JobMode, SessionId, UserId};
 use crate::infra::line::flex_messages;
 use crate::usecases::UsecaseError;
 
@@ -63,6 +64,7 @@ struct LineEventPostback {
 
 pub struct ReceiveWebhookUseCase {
     shared_turns: Option<Arc<dyn crate::domain::web::TurnRepository>>,
+    character_repo: Option<Arc<dyn CharacterRepository>>,
     line_client: Arc<dyn LineClient>,
     user_repo: Arc<dyn UserRepository>,
     session_repo: Arc<dyn RoleplaySessionRepository>,
@@ -89,6 +91,7 @@ impl ReceiveWebhookUseCase {
     ) -> Self {
         Self {
             shared_turns: None,
+            character_repo: None,
             line_client,
             user_repo,
             session_repo,
@@ -107,6 +110,23 @@ impl ReceiveWebhookUseCase {
     ) -> Self {
         self.shared_turns = turns;
         self
+    }
+
+    pub fn with_character_repo(mut self, characters: Arc<dyn CharacterRepository>) -> Self {
+        self.character_repo = Some(characters);
+        self
+    }
+
+    /// Best-effort character name for personalised copy; `None` on any failure.
+    async fn character_name(&self, id: &CharacterId) -> Option<String> {
+        let repo = self.character_repo.as_ref()?;
+        match repo.find_by_id(id).await {
+            Ok(character) => character.map(|c| c.name().as_str().to_string()),
+            Err(e) => {
+                tracing::warn!(error = %e, "Character lookup for credit card failed");
+                None
+            }
+        }
     }
 
     async fn resolve_welcome_credits(&self) -> Result<i32, UsecaseError> {
@@ -253,32 +273,55 @@ impl ReceiveWebhookUseCase {
                     {
                         Ok(_) => return Ok(None),
                         Err(error) => {
-                            let message = match error {
-                                crate::domain::web::WebError::Rejected("INSUFFICIENT_CREDITS") => {
-                                    "เครดิตไม่พอ กรุณาเติมเครดิตแล้วลองอีกครั้ง"
-                                }
-                                crate::domain::web::WebError::Rejected("TURN_IN_PROGRESS") => {
-                                    "กำลังตอบข้อความก่อนหน้าอยู่ รอสักครู่นะ"
-                                }
-                                crate::domain::web::WebError::Rejected(
-                                    "TURN_IN_PROGRESS_ELSEWHERE",
-                                ) => "ตัวละครกำลังตอบข้อความจากเว็บอยู่ ส่งใหม่อีกครั้งได้เลยเมื่อตอบเสร็จ",
-                                crate::domain::web::WebError::Rejected("RATE_LIMITED") => {
-                                    "ตอนนี้ส่งข้อความถี่หรือหลายเรื่องพร้อมกันเกินไป รอให้ตัวละครตอบก่อนแล้วลองใหม่"
-                                }
-                                _ => "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง",
+                            let fallback = LineMessage::Text {
+                                text: admission_rejection_text(&error).into(),
+                                sender_name: String::new(),
+                                sender_icon_url: String::new(),
                             };
-                            let _ = self
-                                .line_client
-                                .reply_messages(
-                                    reply_token,
-                                    vec![LineMessage::Text {
-                                        text: message.into(),
-                                        sender_name: String::new(),
-                                        sender_icon_url: String::new(),
-                                    }],
-                                )
-                                .await;
+                            if matches!(
+                                error,
+                                crate::domain::web::WebError::Rejected("INSUFFICIENT_CREDITS")
+                            ) {
+                                tracing::info!(
+                                    event = "insufficient_credits_rejected",
+                                    user_id = %user.id().as_uuid(),
+                                    session_id = %session.id().as_uuid(),
+                                    "LINE turn rejected: insufficient credits"
+                                );
+                                let character_name =
+                                    self.character_name(session.character_id()).await;
+                                let card = LineMessage::Flex {
+                                    alt_text: "เครดิตหมดแล้ว แตะเพื่อเติมเครดิตแล้วคุยต่อ".into(),
+                                    contents: flex_messages::build_insufficient_credits_flex(
+                                        &self.liff_base_url,
+                                        character_name.as_deref(),
+                                    ),
+                                    sender_name: String::new(),
+                                    sender_icon_url: String::new(),
+                                    quick_reply: None,
+                                };
+                                // The card is an extra: if LINE refuses it, the plain notice still goes out.
+                                if let Err(e) = self
+                                    .line_client
+                                    .reply_messages(reply_token, vec![card])
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        error = %e,
+                                        line_user_id = line_user_id,
+                                        "Out-of-credits card failed, falling back to text"
+                                    );
+                                    let _ = self
+                                        .line_client
+                                        .reply_messages(reply_token, vec![fallback])
+                                        .await;
+                                }
+                            } else {
+                                let _ = self
+                                    .line_client
+                                    .reply_messages(reply_token, vec![fallback])
+                                    .await;
+                            }
                             return Ok(None);
                         }
                     }
@@ -568,5 +611,43 @@ impl ReceiveWebhookUseCase {
         );
 
         Ok(user)
+    }
+}
+
+/// User-facing reply when the shared pipeline refuses a LINE turn.
+fn admission_rejection_text(error: &crate::domain::web::WebError) -> &'static str {
+    use crate::domain::web::WebError;
+    match error {
+        WebError::Rejected("INSUFFICIENT_CREDITS") => "เครดิตไม่พอ กรุณาเติมเครดิตแล้วลองอีกครั้ง",
+        WebError::Rejected("TURN_IN_PROGRESS") => "กำลังตอบข้อความก่อนหน้าอยู่ รอสักครู่นะ",
+        WebError::Rejected("TURN_IN_PROGRESS_ELSEWHERE") => {
+            "ตัวละครกำลังตอบข้อความจากเว็บอยู่ ส่งใหม่อีกครั้งได้เลยเมื่อตอบเสร็จ"
+        }
+        WebError::Rejected("RATE_LIMITED") => {
+            "ตอนนี้ส่งข้อความถี่หรือหลายเรื่องพร้อมกันเกินไป รอให้ตัวละครตอบก่อนแล้วลองใหม่"
+        }
+        _ => "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::web::WebError;
+
+    #[test]
+    fn rejection_text_keeps_existing_copy() {
+        assert_eq!(
+            admission_rejection_text(&WebError::Rejected("INSUFFICIENT_CREDITS")),
+            "เครดิตไม่พอ กรุณาเติมเครดิตแล้วลองอีกครั้ง"
+        );
+        assert_eq!(
+            admission_rejection_text(&WebError::Rejected("TURN_IN_PROGRESS")),
+            "กำลังตอบข้อความก่อนหน้าอยู่ รอสักครู่นะ"
+        );
+        assert_eq!(
+            admission_rejection_text(&WebError::Rejected("SOMETHING_NEW")),
+            "ยังส่งข้อความไม่ได้ กรุณาลองอีกครั้ง"
+        );
     }
 }

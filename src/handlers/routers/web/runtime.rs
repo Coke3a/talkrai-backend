@@ -94,6 +94,7 @@ pub fn spawn(
     cancel: CancellationToken,
     pool: Arc<PgPool>,
     line: Arc<dyn crate::domain::services::line_client::LineClient>,
+    liff_base_url: String,
 ) -> tokio::task::JoinHandle<()> {
     let generator = Arc::new(GenerateTurn {
         turns: runtime.stories.turns.clone(),
@@ -113,7 +114,7 @@ pub fn spawn(
                 tokio::select! {
                     _ = delivery_cancel.cancelled() => break,
                     _ = interval.tick() => {
-                        if let Err(error) = crate::infra::line::shared_delivery::deliver_pending(pool.clone(),line.clone(),web_origin.clone()).await {
+                        if let Err(error) = crate::infra::line::shared_delivery::deliver_pending(pool.clone(),line.clone(),web_origin.clone(),liff_base_url.clone()).await {
                             tracing::error!(%error,"Delivery retry failed");
                         }
                     }

@@ -279,8 +279,10 @@ impl ProcessRoleplayMessageUseCase {
             Err(e) => {
                 let error_messages: Vec<LineMessage> =
                     if matches!(e, UsecaseError::InsufficientCredits) {
-                        let credits_url = format!("{}/credits", self.liff_base_url);
-                        let bubble = flex_messages::build_insufficient_credits_flex(&credits_url);
+                        let bubble = flex_messages::build_insufficient_credits_flex(
+                            &self.liff_base_url,
+                            None,
+                        );
                         vec![LineMessage::Flex {
                             alt_text: "เครดิตหมดแล้ว กดเพื่อเติมเครดิต".into(),
                             contents: bubble,

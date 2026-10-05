@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 struct ControlledLine {
     keys: Mutex<Vec<Uuid>>,
+    batch_sizes: Mutex<Vec<usize>>,
     entered: Semaphore,
     release: Semaphore,
 }
@@ -35,10 +36,11 @@ impl LineClient for ControlledLine {
     async fn push_messages_with_retry_key(
         &self,
         _: &str,
-        _: Vec<LineMessage>,
+        messages: Vec<LineMessage>,
         key: Uuid,
     ) -> Result<(), LineClientError> {
         self.keys.lock().unwrap().push(key);
+        self.batch_sizes.lock().unwrap().push(messages.len());
         self.entered.add_permits(1);
         self.release.acquire().await.unwrap().forget();
         Ok(())
@@ -94,10 +96,17 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
     .execute(&mut conn)
     .await
     .unwrap();
+    // Two turns left: the first delivery attempt carries the low-credit card.
+    sql_query("INSERT INTO credit_balances(user_id,balance) VALUES($1,4)")
+        .bind::<SqlUuid, _>(owner)
+        .execute(&mut conn)
+        .await
+        .unwrap();
     sql_query("INSERT INTO jobs(id,session_id,user_id,line_user_id,user_message,origin,status,delivery_status,completed_at,result) VALUES($1,$2,$3,$3::text,'hello','line','completed','pending',now(),'{\"content\":\"Hello\"}')").bind::<SqlUuid,_>(job).bind::<SqlUuid,_>(story).bind::<SqlUuid,_>(owner).execute(&mut conn).await.unwrap();
     drop(conn);
     let line = Arc::new(ControlledLine {
         keys: Mutex::new(vec![]),
+        batch_sizes: Mutex::new(vec![]),
         entered: Semaphore::new(0),
         release: Semaphore::new(0),
     });
@@ -105,6 +114,7 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
         pool.clone(),
         line.clone(),
         "https://app.talkrai.app".into(),
+        "https://liff.line.me/test".into(),
     ));
     tokio::time::timeout(std::time::Duration::from_secs(5), line.entered.acquire())
         .await
@@ -112,9 +122,14 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
         .unwrap()
         .forget();
     // Another worker cannot take the in-flight job.
-    deliver_pending(pool.clone(), line.clone(), "https://app.talkrai.app".into())
-        .await
-        .unwrap();
+    deliver_pending(
+        pool.clone(),
+        line.clone(),
+        "https://app.talkrai.app".into(),
+        "https://liff.line.me/test".into(),
+    )
+    .await
+    .unwrap();
     assert_eq!(*line.keys.lock().unwrap(), vec![job]);
     let mut conn = pool.get().await.unwrap();
     sql_query("UPDATE jobs SET delivery_retry_at=now()-interval '1 second' WHERE id=$1")
@@ -127,6 +142,7 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
         pool.clone(),
         line.clone(),
         "https://app.talkrai.app".into(),
+        "https://liff.line.me/test".into(),
     ));
     tokio::time::timeout(std::time::Duration::from_secs(5), line.entered.acquire())
         .await
@@ -150,6 +166,11 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
     line.release.add_permits(1);
     second.await.unwrap().unwrap();
     assert_eq!(*line.keys.lock().unwrap(), vec![job, job]);
+    assert_eq!(
+        *line.batch_sizes.lock().unwrap(),
+        vec![2, 1],
+        "reply + low-credit card first; a retry carries the reply alone"
+    );
     let mut conn = pool.get().await.unwrap();
     let status = sql_query("SELECT delivery_status FROM jobs WHERE id=$1")
         .bind::<SqlUuid, _>(job)
@@ -160,9 +181,14 @@ async fn outbox_fences_stale_workers_and_reuses_retry_key() {
     // A process crash on the last claim must become terminal after lease expiry.
     sql_query("UPDATE jobs SET delivery_status='pending',delivery_attempts=10,delivery_retry_at=now()-interval '1 second' WHERE id=$1").bind::<SqlUuid,_>(job).execute(&mut conn).await.unwrap();
     drop(conn);
-    deliver_pending(pool.clone(), line, "https://app.talkrai.app".into())
-        .await
-        .unwrap();
+    deliver_pending(
+        pool.clone(),
+        line,
+        "https://app.talkrai.app".into(),
+        "https://liff.line.me/test".into(),
+    )
+    .await
+    .unwrap();
     let mut conn = pool.get().await.unwrap();
     let status = sql_query("SELECT delivery_status FROM jobs WHERE id=$1")
         .bind::<SqlUuid, _>(job)

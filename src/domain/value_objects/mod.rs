@@ -2,6 +2,7 @@ pub mod character_gender;
 pub mod character_mood;
 pub mod character_name;
 pub mod check_in;
+pub mod credit_package;
 pub mod credit_transaction_type;
 pub mod ids;
 pub mod job_mode;
@@ -20,6 +21,9 @@ pub use character_gender::CharacterGender;
 pub use character_mood::CharacterMood;
 pub use character_name::CharacterName;
 pub use check_in::{CheckInConfig, CheckInOutcome};
+pub use credit_package::{
+    low_credit_turns, turns_left, CreditPackage, CREDIT_PACKAGES, LOW_CREDIT_TURNS, TURN_COST,
+};
 pub use credit_transaction_type::CreditTransactionType;
 pub use ids::*;
 pub use job_mode::JobMode;

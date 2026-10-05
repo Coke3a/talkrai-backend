@@ -41,6 +41,10 @@ struct Delivery {
     time_of_day: String,
     #[diesel(sql_type=Text)]
     atmosphere: String,
+    #[diesel(sql_type=diesel::sql_types::Integer)]
+    delivery_attempts: i32,
+    #[diesel(sql_type=diesel::sql_types::Integer)]
+    available_credits: i32,
 }
 /// One-line LINE notice for web turns completed since LINE's previous message in the same story.
 pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -> Option<String> {
@@ -49,6 +53,31 @@ pub fn web_activity_notice(web_turns: i64, web_origin: &str, session_id: Uuid) -
             "มีการคุยต่อบนเว็บ {web_turns} ข้อความ ดูได้ที่ {}/stories/{session_id}",
             web_origin.trim_end_matches('/')
         )
+    })
+}
+/// Low-credit nudge to append after the reply. Only on the first delivery attempt: if that
+/// attempt fails for any reason, retries carry the reply alone, so the extra can never keep
+/// the character's answer from arriving.
+fn low_credit_card(
+    liff_base_url: &str,
+    character_name: &str,
+    available_credits: i32,
+    delivery_attempts: i32,
+) -> Option<LineMessage> {
+    if delivery_attempts > 1 {
+        return None;
+    }
+    let turns = crate::domain::value_objects::low_credit_turns(available_credits)?;
+    Some(LineMessage::Flex {
+        alt_text: format!("คุยได้อีก {turns} ข้อความ แตะเพื่อเติมเครดิต"),
+        contents: crate::infra::line::flex_messages::build_low_credit_flex(
+            liff_base_url,
+            Some(character_name).filter(|name| !name.is_empty()),
+            turns,
+        ),
+        sender_name: String::new(),
+        sender_icon_url: String::new(),
+        quick_reply: None,
     })
 }
 /// Same header as the LIFF opening bubble: the story's latest location and time, falling back to the scene's.
@@ -70,12 +99,13 @@ pub async fn deliver_pending(
     pool: Arc<PgPool>,
     line: Arc<dyn LineClient>,
     web_origin: String,
+    liff_base_url: String,
 ) -> anyhow::Result<()> {
     let mut conn = pool.get().await?;
     // Expired final attempts must not remain pending forever after a process crash.
     sql_query("UPDATE jobs SET delivery_status='failed' WHERE origin='line' AND delivery_status='pending' AND delivery_retry_at<now() AND (delivery_attempts>=10 OR delivery_first_attempt_at<now()-interval '23 hours')")
         .execute(&mut conn).await?;
-    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar,j.session_id,(SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.user_id=j.user_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.user_id=j.user_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) AS web_turns,coalesce(s.current_location,sc.location) AS location,coalesce(s.scene_time,sc.time_of_day) AS time_of_day,sc.atmosphere FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id JOIN scenes sc ON sc.id=s.scene_id").load::<Delivery>(&mut conn).await?;
+    let rows=sql_query("WITH selected AS (SELECT j.id FROM jobs j JOIN users u ON u.id=j.user_id WHERE j.origin='line' AND j.delivery_status='pending' AND j.delivery_attempts<10 AND (j.delivery_first_attempt_at IS NULL OR j.delivery_first_attempt_at>now()-interval '23 hours') AND (j.delivery_retry_at IS NULL OR j.delivery_retry_at<now()) AND u.status='active' AND u.account_status='active' ORDER BY j.completed_at FOR UPDATE OF j SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs SET delivery_retry_at=now()+interval '90 seconds',delivery_lease_token=gen_random_uuid(),delivery_first_attempt_at=coalesce(delivery_first_attempt_at,now()),delivery_attempts=delivery_attempts+1 WHERE id IN(SELECT id FROM selected) RETURNING *) SELECT j.id,j.line_user_id,j.delivery_lease_token,j.reply_token,j.created_at,coalesce(j.result->>'content','ขอโทษนะ ระบบยังตอบไม่ได้ และไม่ได้หักเครดิต ลองส่งข้อความใหม่อีกครั้งนะ') AS content,c.name,coalesce(c.avatar_url,'') AS avatar,j.session_id,(SELECT count(*) FROM jobs w WHERE w.session_id=j.session_id AND w.user_id=j.user_id AND w.origin='web' AND w.kind='turn' AND w.status='completed' AND w.completed_at<j.created_at AND w.completed_at>coalesce((SELECT max(p.created_at) FROM jobs p WHERE p.session_id=j.session_id AND p.user_id=j.user_id AND p.origin='line' AND p.id<>j.id AND p.created_at<j.created_at),'-infinity'::timestamptz)) AS web_turns,coalesce(s.current_location,sc.location) AS location,coalesce(s.scene_time,sc.time_of_day) AS time_of_day,sc.atmosphere,j.delivery_attempts,coalesce((SELECT greatest(cb.balance-cb.reserved,0) FROM credit_balances cb WHERE cb.user_id=j.user_id),0) AS available_credits FROM claimed j JOIN roleplay_sessions s ON s.id=j.session_id JOIN characters c ON c.id=s.character_id JOIN scenes sc ON sc.id=s.scene_id").load::<Delivery>(&mut conn).await?;
     drop(conn);
     for item in rows {
         let contents = reply_bubble(
@@ -83,6 +113,12 @@ pub async fn deliver_pending(
             &item.location,
             &item.time_of_day,
             &item.atmosphere,
+        );
+        let low_credit = low_credit_card(
+            &liff_base_url,
+            &item.name,
+            item.available_credits,
+            item.delivery_attempts,
         );
         let message = LineMessage::Flex {
             alt_text: crate::infra::line::roleplay_flex::truncate_alt_text(&item.content),
@@ -100,6 +136,7 @@ pub async fn deliver_pending(
             });
         }
         messages.push(message);
+        messages.extend(low_credit);
         // One claim at a time; the entire network attempt ends before its lease expires.
         let result = tokio::time::timeout(std::time::Duration::from_secs(45), async {
             let reply = if (chrono::Utc::now() - item.created_at).num_seconds() < 50 {
@@ -137,6 +174,35 @@ pub async fn deliver_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn low_credit_card_only_when_one_or_two_turns_left() {
+        let base = "https://liff.line.me/123";
+        assert!(low_credit_card(base, "พีท", 0, 1).is_none());
+        assert!(low_credit_card(base, "พีท", 2, 1).is_some());
+        assert!(low_credit_card(base, "พีท", 4, 1).is_some());
+        assert!(low_credit_card(base, "พีท", 6, 1).is_none());
+    }
+    #[test]
+    fn low_credit_card_dropped_on_retry() {
+        assert!(low_credit_card("https://liff.line.me/123", "พีท", 2, 2).is_none());
+    }
+    #[test]
+    fn low_credit_card_names_character() {
+        let Some(LineMessage::Flex {
+            contents,
+            sender_name,
+            ..
+        }) = low_credit_card("https://liff.line.me/123", "พีท", 4, 1)
+        else {
+            panic!("expected a flex card");
+        };
+        assert_eq!(sender_name, "");
+        assert_eq!(contents["body"]["contents"][0]["text"], "คุยได้อีก 2 ข้อความ");
+        assert_eq!(
+            contents["body"]["contents"][1]["text"],
+            "เติม 29฿ คุยกับพีทต่อได้อีก 25 ข้อความ"
+        );
+    }
     #[test]
     fn no_notice_without_web_turns() {
         assert_eq!(

@@ -118,7 +118,8 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
             config.line.liff_base_url.clone(),
             config.line.rich_menu_0_id.clone(),
         )
-        .with_shared_turns(web.as_ref().map(|runtime| runtime.stories.turns.clone())),
+        .with_shared_turns(web.as_ref().map(|runtime| runtime.stories.turns.clone()))
+        .with_character_repo(Arc::clone(&repos.character_repo)),
     );
 
     let start_session_usecase = Arc::new(StartSessionUseCase::new(
@@ -257,6 +258,7 @@ pub async fn start(config: Arc<DotEnvyConfig>, db_pool: Arc<PgPool>) -> Result<(
             cancel.clone(),
             db_pool.clone(),
             line_client.clone(),
+            config.line.liff_base_url.clone(),
         ));
     }
 

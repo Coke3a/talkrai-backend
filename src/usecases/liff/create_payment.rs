@@ -3,31 +3,9 @@ use std::sync::Arc;
 use crate::domain::entities::PaymentOrder;
 use crate::domain::repositories::{PaymentOrderRepository, UserRepository};
 use crate::domain::services::beam_client::{BeamClient, CreatePaymentLinkInput};
+use crate::domain::value_objects::CreditPackage;
 use crate::usecases::liff::require_active_user::require_active_user;
 use crate::usecases::UsecaseError;
-
-struct PackageInfo {
-    credits: i32,
-    price_thb: i32,
-}
-
-fn get_package(package_id: &str) -> Option<PackageInfo> {
-    match package_id {
-        "basic" => Some(PackageInfo {
-            credits: 50,
-            price_thb: 29,
-        }),
-        "plus" => Some(PackageInfo {
-            credits: 150,
-            price_thb: 69,
-        }),
-        "premium" => Some(PackageInfo {
-            credits: 400,
-            price_thb: 149,
-        }),
-        _ => None,
-    }
-}
 
 pub struct CreatePaymentInput {
     pub line_user_id: String,
@@ -64,7 +42,7 @@ impl CreatePaymentUseCase {
         input: CreatePaymentInput,
     ) -> Result<CreatePaymentOutput, UsecaseError> {
         // 1. Validate package
-        let package = get_package(&input.package_id).ok_or_else(|| {
+        let package = CreditPackage::find(&input.package_id).ok_or_else(|| {
             UsecaseError::Validation(format!("Invalid package_id: {}", input.package_id))
         })?;
 

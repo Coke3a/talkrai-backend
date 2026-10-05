@@ -1,8 +1,12 @@
 use serde_json::json;
 
+use crate::domain::value_objects::CreditPackage;
+
 // ===== TalkRai Design System =====
 // Primary Coral Rose
 const PRIMARY: &str = "#F96D4B";
+// Deeper coral for filled buttons and offer accents: white text on it passes 4.5:1.
+const PRIMARY_DEEP: &str = "#C2482A";
 #[allow(dead_code)]
 const PRIMARY_LIGHT: &str = "#FFE8E0";
 
@@ -199,60 +203,155 @@ pub fn build_welcome_flex(
     bubble
 }
 
-/// Build a Flex Bubble notifying the user that their credits have run out,
-/// with a CTA button linking to the credits top-up page.
-pub fn build_insufficient_credits_flex(liff_credits_url: &str) -> serde_json::Value {
+/// LIFF credits page link. `from` names the nudge for analytics.
+pub fn credits_page_url(liff_base_url: &str, from: &str) -> String {
+    format!(
+        "{}/credits?from={from}",
+        liff_base_url.trim_end_matches('/')
+    )
+}
+
+/// Out-of-credits card: one button to the credits page (where the user picks a package),
+/// the starter price as a hint, and the free daily credit as the no-pay way back.
+pub fn build_insufficient_credits_flex(
+    liff_base_url: &str,
+    character_name: Option<&str>,
+) -> serde_json::Value {
+    let starter = CreditPackage::starter();
+    let waiting = match character_name {
+        Some(name) => format!("{name}ยังรอคำตอบจากคุณอยู่นะ เติมเครดิตแล้วคุยต่อได้เลย"),
+        None => "ตัวละครยังรอคำตอบจากคุณอยู่นะ เติมเครดิตแล้วคุยต่อได้เลย".to_string(),
+    };
     json!({
         "type": "bubble",
+        "size": "mega",
         "styles": {
-            "body": {
-                "backgroundColor": BG_CREAM
-            },
-            "footer": {
-                "backgroundColor": BG_CREAM
-            }
+            "body": { "backgroundColor": BG_CREAM }
         },
         "body": {
             "type": "box",
             "layout": "vertical",
+            "paddingAll": "18px",
             "contents": [
                 {
-                    "type": "box",
-                    "layout": "vertical",
-                    "height": "3px",
-                    "backgroundColor": WARNING,
-                    "contents": []
+                    "type": "text",
+                    "text": "เครดิตหมดแล้ว",
+                    "weight": "bold",
+                    "size": "lg",
+                    "color": GRAY_900
                 },
                 {
                     "type": "text",
-                    "text": "เครดิตหมดแล้ว!",
+                    "text": waiting,
+                    "wrap": true,
+                    "size": "sm",
+                    "color": GRAY_600,
+                    "margin": "sm"
+                },
+                {
+                    "type": "text",
+                    "text": format!(
+                        "เริ่มต้น {}฿ คุยต่อได้ {} ข้อความ",
+                        starter.price_thb,
+                        starter.turns()
+                    ),
+                    "wrap": true,
+                    "size": "sm",
                     "weight": "bold",
-                    "size": "lg",
-                    "color": ERROR,
+                    "color": PRIMARY_DEEP,
+                    "margin": "md"
+                },
+                {
+                    "type": "button",
+                    "style": "primary",
+                    "color": PRIMARY_DEEP,
+                    "margin": "lg",
+                    "action": {
+                        "type": "uri",
+                        "label": "เติมเครดิต",
+                        "uri": credits_page_url(liff_base_url, "out_of_credits")
+                    }
+                },
+                {
+                    "type": "separator",
+                    "color": SEPARATOR_COLOR,
                     "margin": "lg"
                 },
                 {
                     "type": "text",
-                    "text": "ข้อความของคุณยังไม่ได้ถูกส่งออกไปนะคะ เพราะเครดิตหมดแล้วค่ะ เติมเครดิตเพื่อแชทกับตัวละครต่อได้เลยนะคะ ✨",
-                    "wrap": true,
-                    "size": "md",
-                    "color": GRAY_600,
+                    "text": "หรือกลับมาพรุ่งนี้",
+                    "weight": "bold",
+                    "size": "sm",
+                    "color": GRAY_900,
                     "margin": "md"
+                },
+                {
+                    "type": "text",
+                    "text": "ทักมาครั้งแรกของวัน รับเครดิตฟรีอัตโนมัติ",
+                    "wrap": true,
+                    "size": "xs",
+                    "color": GRAY_600,
+                    "margin": "xs"
                 }
             ]
+        }
+    })
+}
+
+/// Small card appended after a character reply when only a turn or two remain.
+pub fn build_low_credit_flex(
+    liff_base_url: &str,
+    character_name: Option<&str>,
+    turns_left: i32,
+) -> serde_json::Value {
+    let starter = CreditPackage::starter();
+    let offer = match character_name {
+        Some(name) => format!(
+            "เติม {}฿ คุยกับ{name}ต่อได้อีก {} ข้อความ",
+            starter.price_thb,
+            starter.turns()
+        ),
+        None => format!(
+            "เติม {}฿ คุยต่อได้อีก {} ข้อความ",
+            starter.price_thb,
+            starter.turns()
+        ),
+    };
+    json!({
+        "type": "bubble",
+        "size": "kilo",
+        "styles": {
+            "body": { "backgroundColor": "#FFFFFF" }
         },
-        "footer": {
+        "body": {
             "type": "box",
             "layout": "vertical",
+            "paddingAll": "14px",
             "contents": [
                 {
+                    "type": "text",
+                    "text": format!("คุยได้อีก {turns_left} ข้อความ"),
+                    "weight": "bold",
+                    "size": "md",
+                    "color": GRAY_900
+                },
+                {
+                    "type": "text",
+                    "text": offer,
+                    "wrap": true,
+                    "size": "sm",
+                    "color": GRAY_600,
+                    "margin": "sm"
+                },
+                {
                     "type": "button",
-                    "style": "primary",
-                    "color": PRIMARY,
+                    "style": "link",
+                    "color": PRIMARY_DEEP,
+                    "margin": "sm",
                     "action": {
                         "type": "uri",
                         "label": "เติมเครดิต",
-                        "uri": liff_credits_url
+                        "uri": credits_page_url(liff_base_url, "low_credit")
                     }
                 }
             ]
@@ -484,28 +583,56 @@ mod tests {
     }
 
     #[test]
-    fn insufficient_credits_flex_structure() {
-        let flex = build_insufficient_credits_flex("https://liff.line.me/123/credits");
-        let body_contents = flex["body"]["contents"].as_array().unwrap();
+    fn credits_page_url_carries_source_only() {
+        assert_eq!(
+            credits_page_url("https://liff.line.me/123/", "out_of_credits"),
+            "https://liff.line.me/123/credits?from=out_of_credits"
+        );
+    }
 
-        // accent bar + title + description = 3 elements
-        assert_eq!(body_contents.len(), 3);
+    #[test]
+    fn insufficient_credits_flex_links_plain_credits_page() {
+        let flex = build_insufficient_credits_flex("https://liff.line.me/123", Some("เซย์เมย์"));
+        let body = flex["body"]["contents"].as_array().unwrap();
 
-        // Warning accent bar
-        assert_eq!(body_contents[0]["height"], "3px");
-        assert_eq!(body_contents[0]["backgroundColor"], "#F5C882");
+        assert_eq!(body[0]["text"], "เครดิตหมดแล้ว");
+        assert_eq!(
+            body[1]["text"],
+            "เซย์เมย์ยังรอคำตอบจากคุณอยู่นะ เติมเครดิตแล้วคุยต่อได้เลย"
+        );
+        assert_eq!(body[2]["text"], "เริ่มต้น 29฿ คุยต่อได้ 25 ข้อความ");
+        assert_eq!(body[3]["action"]["label"], "เติมเครดิต");
+        assert_eq!(
+            body[3]["action"]["uri"],
+            "https://liff.line.me/123/credits?from=out_of_credits"
+        );
+    }
 
-        // Title in error color
-        assert_eq!(body_contents[1]["text"], "เครดิตหมดแล้ว!");
-        assert_eq!(body_contents[1]["color"], "#E5542F");
+    #[test]
+    fn insufficient_credits_flex_without_character_name() {
+        let flex = build_insufficient_credits_flex("https://liff.line.me/123", None);
+        assert_eq!(
+            flex["body"]["contents"][1]["text"],
+            "ตัวละครยังรอคำตอบจากคุณอยู่นะ เติมเครดิตแล้วคุยต่อได้เลย"
+        );
+    }
 
-        // Button color
-        let button = &flex["footer"]["contents"][0];
-        assert_eq!(button["color"], "#F96D4B");
+    #[test]
+    fn low_credit_flex_counts_turns_and_links_starter() {
+        let flex = build_low_credit_flex("https://liff.line.me/123", Some("พีท"), 2);
+        let body = flex["body"]["contents"].as_array().unwrap();
+        assert_eq!(body[0]["text"], "คุยได้อีก 2 ข้อความ");
+        assert_eq!(body[1]["text"], "เติม 29฿ คุยกับพีทต่อได้อีก 25 ข้อความ");
+        assert_eq!(
+            body[2]["action"]["uri"],
+            "https://liff.line.me/123/credits?from=low_credit"
+        );
 
-        // Cream backgrounds
-        assert_eq!(flex["styles"]["body"]["backgroundColor"], "#FFF8F0");
-        assert_eq!(flex["styles"]["footer"]["backgroundColor"], "#FFF8F0");
+        let anonymous = build_low_credit_flex("https://liff.line.me/123", None, 1);
+        assert_eq!(
+            anonymous["body"]["contents"][1]["text"],
+            "เติม 29฿ คุยต่อได้อีก 25 ข้อความ"
+        );
     }
 
     #[test]
