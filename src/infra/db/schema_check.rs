@@ -1,3 +1,6 @@
+// diesel QueryableByName derive output trips this lint on clippy ≥1.99
+#![allow(clippy::redundant_field_names)]
+
 use super::postgres_connection::PgPool;
 use diesel::{sql_query, sql_types::Integer, QueryableByName};
 use diesel_async::RunQueryDsl;

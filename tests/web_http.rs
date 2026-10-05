@@ -1,3 +1,6 @@
+// diesel QueryableByName derive output trips this lint on clippy ≥1.99
+#![allow(clippy::redundant_field_names)]
+
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},

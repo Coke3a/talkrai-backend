@@ -1,3 +1,6 @@
+// diesel QueryableByName derive output trips this lint on clippy ≥1.99
+#![allow(clippy::redundant_field_names)]
+
 use super::web_data_postgres::{checked, JsonRow};
 use crate::{
     domain::web::{TurnRepository, WebError},
