@@ -11,10 +11,12 @@ concurrency:
 jobs:
   check:
     name: Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v7
+      # Pinned: a new stable can add clippy lints and block deploys. Bump deliberately
+      # (run `cargo clippy -- -D warnings` on the new version first).
+      - uses: dtolnay/rust-toolchain@1.99.0
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
@@ -28,11 +30,11 @@ jobs:
   deploy:
     name: Deploy
     needs: check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@1.5
+      - uses: actions/checkout@v7
+      - uses: superfly/flyctl-actions/setup-flyctl@1.6
       - name: Deploy to Fly.io
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

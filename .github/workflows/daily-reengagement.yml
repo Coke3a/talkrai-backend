@@ -16,7 +16,7 @@ on:
 
 jobs:
   trigger:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: POST /internal/jobs/daily-reengagement
         env:
