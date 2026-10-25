@@ -271,7 +271,10 @@ impl ReceiveWebhookUseCase {
                         )
                         .await
                     {
-                        Ok(_) => return Ok(None),
+                        Ok(_) => {
+                            self.show_typing(line_user_id);
+                            return Ok(None);
+                        }
                         Err(error) => {
                             let fallback = LineMessage::Text {
                                 text: admission_rejection_text(&error).into(),
@@ -328,13 +331,7 @@ impl ReceiveWebhookUseCase {
                 }
 
                 // Fire loading animation only when session exists and we'll process the message
-                let lc = Arc::clone(&self.line_client);
-                let uid = line_user_id.to_string();
-                tokio::spawn(async move {
-                    if let Err(e) = lc.show_loading_animation(&uid, Some(20)).await {
-                        tracing::warn!(error = %e, "Failed to show loading animation");
-                    }
-                });
+                self.show_typing(line_user_id);
 
                 // Concurrency guard: reject if session already has an active job
                 if self
@@ -394,6 +391,17 @@ impl ReceiveWebhookUseCase {
                 )))
             }
         }
+    }
+
+    /// Typing indicator while the reply is generated; LINE clears it when the reply arrives.
+    fn show_typing(&self, line_user_id: &str) {
+        let lc = Arc::clone(&self.line_client);
+        let uid = line_user_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = lc.show_loading_animation(&uid, Some(20)).await {
+                tracing::warn!(error = %e, "Failed to show loading animation");
+            }
+        });
     }
 
     async fn handle_follow_event(&self, event: &LineEvent) -> Result<Option<JobId>, UsecaseError> {
